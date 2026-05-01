@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lewis/fundsync/internal/httpclient"
+	"github.com/icpd/fundsync/internal/httpclient"
 )
 
 // Account is the XiaoBei account shape consumed by later normalization.

@@ -3,7 +3,7 @@ package merge
 import (
 	"testing"
 
-	"github.com/lewis/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/model"
 )
 
 func TestApplyReplacesOnlySourceImportGroups(t *testing.T) {

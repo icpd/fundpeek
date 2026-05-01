@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/lewis/fundsync/internal/httpclient"
+	"github.com/icpd/fundsync/internal/httpclient"
 )
 
 const (

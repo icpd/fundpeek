@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/lewis/fundsync/internal/httpclient"
-	"github.com/lewis/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/httpclient"
+	"github.com/icpd/fundsync/internal/model"
 )
 
 var ErrUserConfigConflict = errors.New("real user config changed remotely")

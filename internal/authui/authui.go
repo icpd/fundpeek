@@ -12,10 +12,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/lewis/fundsync/internal/app"
-	"github.com/lewis/fundsync/internal/console"
-	"github.com/lewis/fundsync/internal/model"
-	"github.com/lewis/fundsync/internal/sources/yangjibao"
+	"github.com/icpd/fundsync/internal/app"
+	"github.com/icpd/fundsync/internal/console"
+	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/sources/yangjibao"
 )
 
 const (

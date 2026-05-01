@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lewis/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/model"
 )
 
 var ErrNotAuthenticated = errors.New("not authenticated")

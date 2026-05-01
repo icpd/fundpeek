@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lewis/fundsync/internal/app"
-	"github.com/lewis/fundsync/internal/authui"
-	"github.com/lewis/fundsync/internal/config"
-	"github.com/lewis/fundsync/internal/console"
-	"github.com/lewis/fundsync/internal/credential"
-	"github.com/lewis/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/app"
+	"github.com/icpd/fundsync/internal/authui"
+	"github.com/icpd/fundsync/internal/config"
+	"github.com/icpd/fundsync/internal/console"
+	"github.com/icpd/fundsync/internal/credential"
+	"github.com/icpd/fundsync/internal/model"
 )
 
 func main() {

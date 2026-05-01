@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lewis/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/model"
 )
 
 const (

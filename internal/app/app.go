@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lewis/fundsync/internal/backup"
-	"github.com/lewis/fundsync/internal/config"
-	"github.com/lewis/fundsync/internal/console"
-	"github.com/lewis/fundsync/internal/credential"
-	"github.com/lewis/fundsync/internal/merge"
-	"github.com/lewis/fundsync/internal/model"
-	"github.com/lewis/fundsync/internal/real"
-	"github.com/lewis/fundsync/internal/sources/xiaobei"
-	"github.com/lewis/fundsync/internal/sources/yangjibao"
+	"github.com/icpd/fundsync/internal/backup"
+	"github.com/icpd/fundsync/internal/config"
+	"github.com/icpd/fundsync/internal/console"
+	"github.com/icpd/fundsync/internal/credential"
+	"github.com/icpd/fundsync/internal/merge"
+	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/real"
+	"github.com/icpd/fundsync/internal/sources/xiaobei"
+	"github.com/icpd/fundsync/internal/sources/yangjibao"
 )
 
 type App struct {

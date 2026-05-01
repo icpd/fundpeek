@@ -1,4 +1,4 @@
-module github.com/lewis/fundsync
+module github.com/icpd/fundsync
 
 go 1.25
 
