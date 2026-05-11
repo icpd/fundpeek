@@ -35,6 +35,13 @@ type loadedMsg struct {
 
 type tickMsg time.Time
 
+type summary struct {
+	TodayProfit        float64
+	HasProfit          bool
+	EstimatedChange    float64
+	HasEstimatedChange bool
+}
+
 var (
 	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
 	tuiHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
@@ -228,7 +235,39 @@ func renderTable(rows []Row) string {
 		}
 		b.WriteString("\n")
 	}
+	total := summarizeRows(rows)
+	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", fundWidth+estWidth+profitWidth+latestWidth)))
+	b.WriteString("\n")
+	b.WriteString(cell("汇总", fundWidth, lipgloss.Left))
+	b.WriteString(cell(formatPercent(total.EstimatedChange, total.HasEstimatedChange), estWidth, lipgloss.Right))
+	b.WriteString(cell(formatMoney(total.TodayProfit, total.HasProfit), profitWidth, lipgloss.Right))
+	b.WriteString(cell("", latestWidth, lipgloss.Right))
+	b.WriteString("\n")
 	return b.String()
+}
+
+func summarizeRows(rows []Row) summary {
+	var total summary
+	var estimatedProfit float64
+	var previousValue float64
+	for _, row := range rows {
+		if row.HasProfit {
+			total.TodayProfit += row.TodayProfit
+			total.HasProfit = true
+		}
+		if !row.Quote.HasGSZ || !row.Quote.HasGSZZL || row.Quote.GSZZL <= -100 {
+			continue
+		}
+		currentValue := row.Share * row.Quote.GSZ
+		rowPreviousValue := currentValue / (1 + row.Quote.GSZZL/100)
+		estimatedProfit += currentValue - rowPreviousValue
+		previousValue += rowPreviousValue
+	}
+	if previousValue > 0 {
+		total.EstimatedChange = estimatedProfit / previousValue * 100
+		total.HasEstimatedChange = true
+	}
+	return total
 }
 
 func cell(text string, width int, align lipgloss.Position) string {

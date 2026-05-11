@@ -2,6 +2,7 @@ package tui
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/icpd/fundsync/internal/valuation"
@@ -90,5 +91,60 @@ func TestSortRowsByEstimatedChangeDescendingWithMissingValuesLast(t *testing.T) 
 		if got[i] != want[i] {
 			t.Fatalf("sorted codes = %#v, want %#v", got, want)
 		}
+	}
+}
+
+func TestSummarizeRowsTotalsProfitAndWeightedEstimatedChange(t *testing.T) {
+	rows := []Row{
+		{
+			Position:    Position{Code: "000001", Share: 100},
+			Quote:       valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true},
+			TodayProfit: 2,
+			HasProfit:   true,
+		},
+		{
+			Position:    Position{Code: "000002", Share: 200},
+			Quote:       valuation.Quote{GSZ: 0.99, HasGSZ: true, GSZZL: -1, HasGSZZL: true},
+			TodayProfit: -2,
+			HasProfit:   true,
+		},
+		{
+			Position:    Position{Code: "000003", Share: 10},
+			TodayProfit: 5,
+			HasProfit:   true,
+		},
+	}
+
+	got := summarizeRows(rows)
+
+	if !got.HasProfit {
+		t.Fatal("expected total profit")
+	}
+	if math.Abs(got.TodayProfit-5) > 0.000001 {
+		t.Fatalf("total profit = %f, want 5", got.TodayProfit)
+	}
+	if !got.HasEstimatedChange {
+		t.Fatal("expected estimated change")
+	}
+	wantEstimatedChange := (2.0 - 2.0) / (100.0 + 200.0) * 100.0
+	if math.Abs(got.EstimatedChange-wantEstimatedChange) > 0.000001 {
+		t.Fatalf("estimated change = %f, want %f", got.EstimatedChange, wantEstimatedChange)
+	}
+}
+
+func TestRenderTableSummaryDoesNotShowLatestChangePlaceholder(t *testing.T) {
+	out := renderTable([]Row{
+		{
+			Position:    Position{Code: "000001", Name: "测试基金", Share: 100},
+			Quote:       valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true, ZZL: 1, HasZZL: true},
+			TodayProfit: 2,
+			HasProfit:   true,
+		},
+	})
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	summaryLine := lines[len(lines)-1]
+	if strings.Contains(summaryLine, "--") {
+		t.Fatalf("summary line should not show latest-change placeholder: %q", summaryLine)
 	}
 }
