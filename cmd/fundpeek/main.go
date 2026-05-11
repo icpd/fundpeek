@@ -212,18 +212,31 @@ func hasYesFlag(args []string) bool {
 }
 
 func printUsage() {
-	fmt.Println(`fundpeek
+	fmt.Println(`fundpeek - 基金持仓同步、估值查看和备份恢复工具
 
 Usage:
-  fundpeek auth real|r
-  fundpeek auth yjb|yj
-  fundpeek auth xb|xbyj
-  fundpeek status
+  fundpeek <command> [arguments]
+
+Commands:
+  auth <source>                 登录数据源，支持 real、yangjibao、xiaobei
+  status                        查看各数据源登录状态
+  tui                           打开基金估值和持仓 TUI
+  sync <source>                 同步基金持仓到 real，可选 yjb、xb、all
+  backup                        备份 real 云端配置，输出备份文件路径
+  restore <backup-file> [--yes] 从备份文件恢复 real 云端配置
+  logout <source>               退出指定数据源登录
+  help                          显示帮助信息
+
+Sources:
+  real        aliases: r
+  yangjibao   aliases: yjb, yj
+  xiaobei     aliases: xb, xbyj
+  all         aliases: a        仅用于 sync
+
+Examples:
+  fundpeek auth yjb
+  fundpeek sync all
   fundpeek tui
-  fundpeek sync yjb|yj
-  fundpeek sync xb|xbyj
-  fundpeek sync all|a
   fundpeek backup
-  fundpeek restore <backup-file> [--yes]
-  fundpeek logout <real|r|yjb|yj|xb|xbyj>`)
+  fundpeek restore ./backup.json --yes`)
 }

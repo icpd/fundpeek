@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +91,29 @@ func TestHelpDoesNotCreateConfigFiles(t *testing.T) {
 	}
 }
 
+func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
+	out := captureStdout(t, printUsage)
+
+	for _, want := range []string{
+		"fundpeek - 基金持仓同步、估值查看和备份恢复工具",
+		"Commands:",
+		"auth <source>",
+		"登录数据源",
+		"tui",
+		"打开基金估值和持仓 TUI",
+		"Sources:",
+		"real",
+		"yangjibao",
+		"Examples:",
+		"fundpeek sync all",
+		"fundpeek restore ./backup.json --yes",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestUnknownCommandDoesNotCreateConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
@@ -104,4 +130,26 @@ func TestUnknownCommandDoesNotCreateConfigFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
 		t.Fatalf("unknown command should not create backup dir, stat err: %v", err)
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Stdout = oldStdout })
+	os.Stdout = w
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
 }
