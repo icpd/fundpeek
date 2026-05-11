@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/icpd/fundpeek/internal/backup"
+	fundcache "github.com/icpd/fundpeek/internal/cache"
 	"github.com/icpd/fundpeek/internal/config"
 	"github.com/icpd/fundpeek/internal/console"
 	"github.com/icpd/fundpeek/internal/credential"
@@ -18,12 +19,25 @@ import (
 	"github.com/icpd/fundpeek/internal/real"
 	"github.com/icpd/fundpeek/internal/sources/xiaobei"
 	"github.com/icpd/fundpeek/internal/sources/yangjibao"
+	"github.com/icpd/fundpeek/internal/valuation"
 )
+
+const realDataCacheTTL = 24 * time.Hour
+
+type realClient interface {
+	SendOTP(context.Context, string) error
+	VerifyOTP(context.Context, string, string) (model.RealCredential, error)
+	Refresh(context.Context, model.RealCredential) (model.RealCredential, error)
+	FetchUserConfig(context.Context, model.RealCredential) (real.UserConfig, error)
+	UpsertUserConfig(context.Context, model.RealCredential, map[string]any) error
+	UpdateUserConfigIfUnchanged(context.Context, model.RealCredential, real.UserConfig, map[string]any) error
+}
 
 type App struct {
 	cfg   config.Config
 	store *credential.FileStore
-	real  *real.Client
+	real  realClient
+	cache *fundcache.FileCache
 }
 
 func New(cfg config.Config, store *credential.FileStore) *App {
@@ -31,6 +45,7 @@ func New(cfg config.Config, store *credential.FileStore) *App {
 		cfg:   cfg,
 		store: store,
 		real:  real.NewClient(cfg.SupabaseURL, cfg.SupabaseAnon, cfg.DeviceID),
+		cache: fundcache.NewFileCache(cfg.CacheDir, time.Now),
 	}
 }
 
@@ -256,11 +271,31 @@ func (a *App) RealData(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := a.real.FetchUserConfig(ctx, cred)
+	if a.cache == nil {
+		cfg, err := a.real.FetchUserConfig(ctx, cred)
+		if err != nil {
+			return nil, err
+		}
+		return real.CloneData(cfg.Data)
+	}
+	var data map[string]any
+	err = a.cache.GetOrFetch("real_data", realDataCacheTTL, &data, func() (any, error) {
+		cfg, err := a.real.FetchUserConfig(ctx, cred)
+		if err != nil {
+			return nil, err
+		}
+		return real.CloneData(cfg.Data)
+	})
 	if err != nil {
 		return nil, err
 	}
-	return real.CloneData(cfg.Data)
+	return real.CloneData(data)
+}
+
+func (a *App) FundStockHoldings(ctx context.Context, code string) (valuation.FundStockHoldings, error) {
+	client := valuation.NewClient()
+	cached := valuation.NewCachedClient(a.cache, client)
+	return cached.FetchFundStockHoldings(ctx, code)
 }
 
 func (a *App) Restore(ctx context.Context, path string) error {
@@ -290,12 +325,19 @@ func (a *App) Restore(ctx context.Context, path string) error {
 	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, snapshot.Data); err != nil {
 		return fmt.Errorf("%w; restore pre-backup saved at %s", err, backupPath)
 	}
+	a.InvalidateRealData()
 	fmt.Println("restore pre-backup:", backupPath)
 	return nil
 }
 
 func (a *App) Logout(source string) error {
-	return a.store.Delete(source)
+	if err := a.store.Delete(source); err != nil {
+		return err
+	}
+	if source == model.SourceReal {
+		a.InvalidateRealData()
+	}
+	return nil
 }
 
 func (a *App) applySync(ctx context.Context, inputs []model.SyncInput) error {
@@ -326,9 +368,22 @@ func (a *App) applySync(ctx context.Context, inputs []model.SyncInput) error {
 	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, data); err != nil {
 		return fmt.Errorf("%w; backup saved at %s", err, backupPath)
 	}
+	a.InvalidateRealData()
 	fmt.Println("backup:", backupPath)
 	fmt.Println("real upsert: ok")
 	return nil
+}
+
+func (a *App) InvalidateRealData() {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("real_data")
+	}
+}
+
+func (a *App) InvalidateFundStockHoldings(code string) {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("fund_holdings/" + strings.TrimSpace(code))
+	}
 }
 
 func (a *App) realCred(ctx context.Context) (model.RealCredential, error) {

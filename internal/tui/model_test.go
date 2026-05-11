@@ -4,8 +4,12 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	fundapp "github.com/icpd/fundpeek/internal/app"
+	fundcache "github.com/icpd/fundpeek/internal/cache"
+	"github.com/icpd/fundpeek/internal/config"
 	"github.com/icpd/fundpeek/internal/valuation"
 )
 
@@ -150,6 +154,18 @@ func TestRenderTableSummaryDoesNotShowLatestChangePlaceholder(t *testing.T) {
 	}
 }
 
+func TestRenderTableSummaryAlignsWithFundNames(t *testing.T) {
+	out := renderTable([]Row{
+		{Position: Position{Code: "000001", Name: "华夏成长"}},
+	})
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	summaryLine := lines[len(lines)-1]
+	if !strings.HasPrefix(summaryLine, "  汇总") {
+		t.Fatalf("summary line should align with fund names: %q", summaryLine)
+	}
+}
+
 func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
 	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
 	out := renderTable([]Row{
@@ -180,11 +196,138 @@ func TestRenderTableKeepsShortFundNameWithCode(t *testing.T) {
 func TestListLoadingViewUsesConciseCopy(t *testing.T) {
 	out := model{loading: true}.View()
 
-	if !strings.Contains(out, "正在获取数据...") {
+	if !strings.Contains(out, "正在加载基金持仓和实时估值...") {
 		t.Fatalf("loading view missing concise copy:\n%s", out)
 	}
-	if strings.Contains(out, "正在读取") {
+	if strings.Contains(out, "正在获取数据") {
 		t.Fatalf("loading view should not use verbose read copy:\n%s", out)
+	}
+}
+
+func TestListViewKeepsRefreshHelpCompact(t *testing.T) {
+	out := model{}.View()
+
+	if !strings.Contains(out, "r refresh") {
+		t.Fatalf("list help should show refresh:\n%s", out)
+	}
+	if strings.Contains(out, "R force reload") {
+		t.Fatalf("list help should not show separate force reload:\n%s", out)
+	}
+}
+
+func TestDetailLoadingViewUsesCacheAwareCopy(t *testing.T) {
+	out := renderDetail(detailState{
+		Fund:    Position{Code: "000001", Name: "华夏成长"},
+		Loading: true,
+	})
+
+	if !strings.Contains(out, "正在加载持仓明细和实时行情...") {
+		t.Fatalf("detail loading view missing cache-aware copy:\n%s", out)
+	}
+	if strings.Contains(out, "正在加载股票持仓") {
+		t.Fatalf("detail loading view should not imply stock holdings are always fetched live:\n%s", out)
+	}
+}
+
+func TestManualListRefreshKeepsRealDataCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("real_data", map[string]any{"fund": "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
+		rows: []Row{{Position: Position{Code: "000001"}}},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_ = updated.(model)
+
+	var got map[string]any
+	ok, err := store.GetFresh("real_data", time.Hour, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("manual refresh should keep real data cache")
+	}
+}
+
+func TestManualDetailRefreshKeepsFundHoldingsCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("fund_holdings/000001", map[string]any{"report": "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
+		page: pageDetail,
+		detail: detailState{
+			Fund: Position{Code: "000001"},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_ = updated.(model)
+
+	var got map[string]any
+	ok, err := store.GetFresh("fund_holdings/000001", time.Hour, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("manual detail refresh should keep fund holdings cache")
+	}
+}
+
+func TestForceListRefreshInvalidatesRealDataCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("real_data", map[string]any{"fund": "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
+		rows: []Row{{Position: Position{Code: "000001"}}},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	_ = updated.(model)
+
+	var got map[string]any
+	ok, err := store.GetFresh("real_data", time.Hour, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force refresh should invalidate real data cache: %#v", got)
+	}
+}
+
+func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("fund_holdings/000001", map[string]any{"report": "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
+		page: pageDetail,
+		detail: detailState{
+			Fund: Position{Code: "000001"},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	_ = updated.(model)
+
+	var got map[string]any
+	ok, err := store.GetFresh("fund_holdings/000001", time.Hour, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force detail refresh should invalidate fund holdings cache: %#v", got)
 	}
 }
 

@@ -139,6 +139,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errText = ""
 				return m, m.load()
 			}
+		case "R":
+			if m.page == pageDetail {
+				if !m.detail.Loading {
+					m.app.InvalidateFundStockHoldings(m.detail.Fund.Code)
+					m.detail.Loading = true
+					m.detail.ErrText = ""
+					return m, m.loadDetail()
+				}
+				break
+			}
+			if !m.loading {
+				m.app.InvalidateRealData()
+				m.loading = true
+				m.errText = ""
+				return m, m.load()
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -190,7 +206,7 @@ func (m model) View() string {
 
 	status := "ready"
 	if m.loading {
-		status = "refreshing..."
+		status = "updating quotes..."
 	}
 	if !m.lastRefresh.IsZero() {
 		status += "  updated " + m.lastRefresh.Format("15:04:05")
@@ -204,7 +220,7 @@ func (m model) View() string {
 	}
 	if len(m.rows) == 0 {
 		if m.loading {
-			b.WriteString("正在获取数据...\n")
+			b.WriteString("正在加载基金持仓和实时估值...\n")
 		} else {
 			b.WriteString("没有找到 fundpeek 导入分组下的基金持仓。\n")
 			b.WriteString(tuiHelpStyle.Render("先执行 fundpeek sync yjb / fundpeek sync xb / fundpeek sync all。"))
@@ -228,7 +244,7 @@ func (m model) load() tea.Cmd {
 func (m model) loadDetail() tea.Cmd {
 	fund := m.detail.Fund
 	return func() tea.Msg {
-		data, err := LoadDetail(m.ctx, fund)
+		data, err := LoadDetail(m.ctx, m.app, fund)
 		return detailLoadedMsg{data: data, err: err}
 	}
 }
@@ -330,9 +346,9 @@ func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
 	return rows, nil
 }
 
-func LoadDetail(ctx context.Context, fund Position) (DetailData, error) {
+func LoadDetail(ctx context.Context, a *fundapp.App, fund Position) (DetailData, error) {
 	client := valuation.NewClient()
-	holdings, err := client.FetchFundStockHoldings(ctx, fund.Code)
+	holdings, err := a.FundStockHoldings(ctx, fund.Code)
 	if err != nil {
 		return DetailData{}, err
 	}
@@ -418,6 +434,7 @@ func renderTableWithCursor(rows []Row, cursor int) string {
 	total := summarizeRows(rows)
 	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", fundWidth+estWidth+profitWidth+latestWidth)))
 	b.WriteString("\n")
+	b.WriteString("  ")
 	b.WriteString(cell("汇总", fundWidth, lipgloss.Left))
 	b.WriteString(cell(formatPercent(total.EstimatedChange, total.HasEstimatedChange), estWidth, lipgloss.Right))
 	b.WriteString(cell(formatMoney(total.TodayProfit, total.HasProfit), profitWidth, lipgloss.Right))
@@ -441,7 +458,7 @@ func renderDetail(state detailState) string {
 
 	status := "ready"
 	if state.Loading {
-		status = "refreshing..."
+		status = "updating quotes..."
 	}
 	if state.Data.ReportDate != "" {
 		status += "  report " + state.Data.ReportDate
@@ -462,7 +479,7 @@ func renderDetail(state detailState) string {
 	}
 	if len(state.Data.Rows) == 0 {
 		if state.Loading {
-			b.WriteString("正在加载股票持仓和实时行情...\n")
+			b.WriteString("正在加载持仓明细和实时行情...\n")
 		} else if state.Data.ReportDate != "" && !state.Data.IsRecent {
 			b.WriteString("最新持仓报告期已超过 6 个月，未展示过期持仓。\n")
 		} else {

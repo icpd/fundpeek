@@ -21,6 +21,7 @@ type Config struct {
 	DeviceID       string
 	ConfigDir      string
 	BackupDir      string
+	CacheDir       string
 	CredentialPath string
 }
 
@@ -43,12 +44,16 @@ func Load() (Config, error) {
 		DeviceID:       getenv("FUNDPEEK_DEVICE_ID", deviceID),
 		ConfigDir:      configDir,
 		BackupDir:      filepath.Join(configDir, "backups"),
+		CacheDir:       filepath.Join(configDir, "cache"),
 		CredentialPath: filepath.Join(configDir, "credentials.json"),
 	}
 	if err := validateSupabaseURL(cfg.SupabaseURL); err != nil {
 		return Config{}, err
 	}
 	if err := ensurePrivateDir(cfg.BackupDir); err != nil {
+		return Config{}, err
+	}
+	if err := ensurePrivateDir(cfg.CacheDir); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
