@@ -534,7 +534,12 @@ func fundLabel(row Row) string {
 	if strings.TrimSpace(name) == "" {
 		name = "未知基金"
 	}
-	return fmt.Sprintf("%s #%s", name, row.Code)
+	suffix := fmt.Sprintf(" #%s", row.Code)
+	nameWidth := 34 - lipgloss.Width(suffix)
+	if nameWidth < 1 {
+		return suffix
+	}
+	return fmt.Sprintf("%s%s", truncateDisplayWidth(name, nameWidth), suffix)
 }
 
 func fundPositionLabel(pos Position) string {
@@ -554,6 +559,28 @@ func stockLabel(row StockHoldingRow) string {
 		name = "未知股票"
 	}
 	return fmt.Sprintf("%s #%s", name, row.Holding.Code)
+}
+
+func truncateDisplayWidth(text string, width int) string {
+	text = strings.TrimSpace(text)
+	if width <= 0 || lipgloss.Width(text) <= width {
+		return text
+	}
+	const marker = "..."
+	markerWidth := lipgloss.Width(marker)
+	if width <= markerWidth {
+		return marker[:width]
+	}
+	limit := width - markerWidth
+	var b strings.Builder
+	for _, r := range text {
+		next := b.String() + string(r)
+		if lipgloss.Width(next) > limit {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + marker
 }
 
 func formatPercent(value float64, ok bool) string {

@@ -150,6 +150,33 @@ func TestRenderTableSummaryDoesNotShowLatestChangePlaceholder(t *testing.T) {
 	}
 }
 
+func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
+	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
+	out := renderTable([]Row{
+		{Position: Position{Code: "001938", Name: longName}},
+	})
+
+	if !strings.Contains(out, "#001938") {
+		t.Fatalf("rendered table should keep fund code:\n%s", out)
+	}
+	if strings.Contains(out, longName) {
+		t.Fatalf("rendered table should not contain full long fund name:\n%s", out)
+	}
+	if !strings.Contains(out, "... #001938") {
+		t.Fatalf("rendered table should truncate long fund name before code:\n%s", out)
+	}
+}
+
+func TestRenderTableKeepsShortFundNameWithCode(t *testing.T) {
+	out := renderTable([]Row{
+		{Position: Position{Code: "000001", Name: "华夏成长"}},
+	})
+
+	if !strings.Contains(out, "华夏成长 #000001") {
+		t.Fatalf("rendered table should keep short fund label:\n%s", out)
+	}
+}
+
 func TestListLoadingViewUsesConciseCopy(t *testing.T) {
 	out := model{loading: true}.View()
 
