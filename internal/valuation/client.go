@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/icpd/fundsync/internal/httpclient"
+	"github.com/icpd/fundpeek/internal/httpclient"
 )
 
 type Client struct {

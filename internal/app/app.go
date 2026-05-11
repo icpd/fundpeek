@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icpd/fundsync/internal/backup"
-	"github.com/icpd/fundsync/internal/config"
-	"github.com/icpd/fundsync/internal/console"
-	"github.com/icpd/fundsync/internal/credential"
-	"github.com/icpd/fundsync/internal/merge"
-	"github.com/icpd/fundsync/internal/model"
-	"github.com/icpd/fundsync/internal/real"
-	"github.com/icpd/fundsync/internal/sources/xiaobei"
-	"github.com/icpd/fundsync/internal/sources/yangjibao"
+	"github.com/icpd/fundpeek/internal/backup"
+	"github.com/icpd/fundpeek/internal/config"
+	"github.com/icpd/fundpeek/internal/console"
+	"github.com/icpd/fundpeek/internal/credential"
+	"github.com/icpd/fundpeek/internal/merge"
+	"github.com/icpd/fundpeek/internal/model"
+	"github.com/icpd/fundpeek/internal/real"
+	"github.com/icpd/fundpeek/internal/sources/xiaobei"
+	"github.com/icpd/fundpeek/internal/sources/yangjibao"
 )
 
 type App struct {
@@ -102,7 +102,7 @@ func (a *App) AuthYangJiBao(ctx context.Context) error {
 	for {
 		select {
 		case <-authCtx.Done():
-			spinner.Done("二维码已超时，请重新执行：fundsync auth yjb")
+			spinner.Done("二维码已超时，请重新执行：fundpeek auth yjb")
 			return fmt.Errorf("yangjibao qr timed out")
 		case <-statusTicker.C:
 			spinner.Update("等待扫码")
@@ -125,7 +125,7 @@ func (a *App) AuthYangJiBao(ctx context.Context) error {
 				spinner.Done("养基宝已授权")
 				return nil
 			case yangjibao.StateExpired:
-				spinner.Done("二维码已超时，请重新执行：fundsync auth yjb")
+				spinner.Done("二维码已超时，请重新执行：fundpeek auth yjb")
 				return fmt.Errorf("yangjibao qr timed out")
 			}
 		}

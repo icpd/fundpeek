@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundpeek/internal/model"
 )
 
 func TestResendBlockedDuringCooldown(t *testing.T) {

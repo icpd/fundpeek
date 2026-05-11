@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/icpd/fundsync/internal/httpclient"
+	"github.com/icpd/fundpeek/internal/httpclient"
 )
 
 const (
@@ -37,7 +37,7 @@ func NewClient(token string) *Client {
 			SetLogger(httpclient.DiscardLogger()).
 			SetTimeout(30*time.Second).
 			SetRetryCount(2).
-			SetHeader("User-Agent", "fundsync/1.0"),
+			SetHeader("User-Agent", "fundpeek/1.0"),
 		now: time.Now,
 	}
 	return c

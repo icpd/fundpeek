@@ -1,8 +1,8 @@
-# fundsync Go CLI 同步方案
+# fundpeek Go CLI 同步方案
 
 ## 背景
 
-`fundsync` 设计为一个独立 Go CLI 工具，用来把养基宝、小倍养基中的账户和持仓数据同步到 `real-time-fund` 项目的 Supabase `user_configs` 中。
+`fundpeek` 设计为一个独立 Go CLI 工具，用来把养基宝、小倍养基中的账户和持仓数据同步到 `real-time-fund` 项目的 Supabase `user_configs` 中。
 
 该工具不修改 `real-time-fund` 前端代码，也不修改 `FundVal-Live` 后端代码。它复用 `FundVal-Live` 中已经验证过的三方接口流程，并复用 Proxyman #152 抓到的 `real-time-fund` 云端写入方式。
 
@@ -31,7 +31,7 @@
 
 ```text
           +----------------+
-          |  fundsync CLI  |
+          |  fundpeek CLI  |
           +-------+--------+
                   |
     +-------------+-------------+
@@ -55,23 +55,23 @@
 ## CLI 命令设计
 
 ```text
-fundsync auth real              登录 real/Supabase，邮箱 OTP
-fundsync auth yangjibao         养基宝扫码登录
-fundsync auth xiaobei           小倍养基短信登录
-fundsync status                 查看 real、养基宝、小倍养基登录态
-fundsync sync yangjibao         只同步养基宝
-fundsync sync xiaobei           只同步小倍养基
-fundsync sync all               同步养基宝和小倍养基
-fundsync backup                 备份当前 real 云端 data
-fundsync restore <backup-file>  用备份恢复 real 云端 data
-fundsync logout <source>        删除本地 token
+fundpeek auth real              登录 real/Supabase，邮箱 OTP
+fundpeek auth yangjibao         养基宝扫码登录
+fundpeek auth xiaobei           小倍养基短信登录
+fundpeek status                 查看 real、养基宝、小倍养基登录态
+fundpeek sync yangjibao         只同步养基宝
+fundpeek sync xiaobei           只同步小倍养基
+fundpeek sync all               同步养基宝和小倍养基
+fundpeek backup                 备份当前 real 云端 data
+fundpeek restore <backup-file>  用备份恢复 real 云端 data
+fundpeek logout <source>        删除本地 token
 ```
 
 ## Go 包边界
 
 | 包 | 职责 |
 |---|---|
-| `cmd/fundsync` | CLI 入口、参数解析、命令路由 |
+| `cmd/fundpeek` | CLI 入口、参数解析、命令路由 |
 | `internal/httpclient` | resty client 初始化、超时、重试、日志脱敏 |
 | `internal/real` | Supabase OTP 登录、refresh、读取和写入 `user_configs` |
 | `internal/sources/yangjibao` | 养基宝签名、二维码登录、账户、持仓 |
@@ -123,12 +123,12 @@ Content-Type: application/json
     "groups": [],
     "groupHoldings": {},
     "_syncMeta": {
-      "deviceId": "<fundsync-device-id>",
+      "deviceId": "<fundpeek-device-id>",
       "at": "<iso-time>"
     }
   },
   "updated_at": "<iso-time>",
-  "last_device_id": "<fundsync-device-id>"
+  "last_device_id": "<fundpeek-device-id>"
 }
 ```
 
@@ -459,7 +459,7 @@ xiaobei unionId
 使用 refresh token 刷新 session。刷新失败则要求重新执行：
 
 ```text
-fundsync auth real
+fundpeek auth real
 ```
 
 ### 养基宝 token 失效
@@ -467,7 +467,7 @@ fundsync auth real
 请求 `/user_account` 失败时，删除本地养基宝 token，并提示重新扫码：
 
 ```text
-fundsync auth yangjibao
+fundpeek auth yangjibao
 ```
 
 ### 小倍养基 token 失效
@@ -475,7 +475,7 @@ fundsync auth yangjibao
 JWT 过期或接口返回未授权时，删除本地小倍养基 token，并提示重新短信登录：
 
 ```text
-fundsync auth xiaobei
+fundpeek auth xiaobei
 ```
 
 ### 写入 real 失败
@@ -534,20 +534,20 @@ Supabase 写入结果
 第一版只做：
 
 ```text
-fundsync auth real
-fundsync auth yangjibao
-fundsync status
-fundsync sync yangjibao
-fundsync backup
-fundsync restore <backup-file>
+fundpeek auth real
+fundpeek auth yangjibao
+fundpeek status
+fundpeek sync yangjibao
+fundpeek backup
+fundpeek restore <backup-file>
 ```
 
 第二版再做：
 
 ```text
-fundsync auth xiaobei
-fundsync sync xiaobei
-fundsync sync all
+fundpeek auth xiaobei
+fundpeek sync xiaobei
+fundpeek sync all
 ```
 
 ## 风险和应对

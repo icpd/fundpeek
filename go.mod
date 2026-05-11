@@ -1,4 +1,4 @@
-module github.com/icpd/fundsync
+module github.com/icpd/fundpeek
 
 go 1.25.0
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/icpd/fundsync/internal/valuation"
+	"github.com/icpd/fundpeek/internal/valuation"
 )
 
 func TestBuildPositionsAggregatesImportedGroupHoldingsOnly(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundpeek/internal/model"
 )
 
 const (
@@ -29,7 +29,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	configDir := getenv("FUNDSYNC_CONFIG_DIR", filepath.Join(home, ".fundsync"))
+	configDir := getenv("FUNDPEEK_CONFIG_DIR", filepath.Join(home, ".fundpeek"))
 	if err := ensurePrivateDir(configDir); err != nil {
 		return Config{}, err
 	}
@@ -38,9 +38,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		SupabaseURL:    getenv("FUNDSYNC_SUPABASE_URL", defaultSupabaseURL),
-		SupabaseAnon:   getenv("FUNDSYNC_SUPABASE_ANON_KEY", defaultSupabaseAnonKey),
-		DeviceID:       getenv("FUNDSYNC_DEVICE_ID", deviceID),
+		SupabaseURL:    getenv("FUNDPEEK_SUPABASE_URL", defaultSupabaseURL),
+		SupabaseAnon:   getenv("FUNDPEEK_SUPABASE_ANON_KEY", defaultSupabaseAnonKey),
+		DeviceID:       getenv("FUNDPEEK_DEVICE_ID", deviceID),
 		ConfigDir:      configDir,
 		BackupDir:      filepath.Join(configDir, "backups"),
 		CredentialPath: filepath.Join(configDir, "credentials.json"),
@@ -96,13 +96,13 @@ func writePrivateFile(path string, body []byte) error {
 func validateSupabaseURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid FUNDSYNC_SUPABASE_URL: %w", err)
+		return fmt.Errorf("invalid FUNDPEEK_SUPABASE_URL: %w", err)
 	}
 	if parsed.Scheme != "https" {
-		return fmt.Errorf("FUNDSYNC_SUPABASE_URL must use https")
+		return fmt.Errorf("FUNDPEEK_SUPABASE_URL must use https")
 	}
 	if parsed.Host == "" {
-		return fmt.Errorf("FUNDSYNC_SUPABASE_URL must include host")
+		return fmt.Errorf("FUNDPEEK_SUPABASE_URL must include host")
 	}
 	return nil
 }

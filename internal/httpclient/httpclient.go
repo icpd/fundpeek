@@ -15,7 +15,7 @@ func New(baseURL string) *resty.Client {
 		SetTimeout(30*time.Second).
 		SetRetryCount(2).
 		SetRetryWaitTime(500*time.Millisecond).
-		SetHeader("User-Agent", "fundsync/0.1")
+		SetHeader("User-Agent", "fundpeek/0.1")
 }
 
 func DiscardLogger() resty.Logger {

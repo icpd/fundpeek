@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	fundapp "github.com/icpd/fundsync/internal/app"
-	"github.com/icpd/fundsync/internal/valuation"
+	fundapp "github.com/icpd/fundpeek/internal/app"
+	"github.com/icpd/fundpeek/internal/valuation"
 )
 
 const refreshEvery = 30 * time.Second
@@ -99,7 +99,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(tuiTitleStyle.Render("fundsync tui"))
+	b.WriteString(tuiTitleStyle.Render("fundpeek tui"))
 	b.WriteString("\n")
 
 	status := "ready"
@@ -120,8 +120,8 @@ func (m model) View() string {
 		if m.loading {
 			b.WriteString("正在读取 real 同步数据并刷新估值...\n")
 		} else {
-			b.WriteString("没有找到 fundsync 导入分组下的基金持仓。\n")
-			b.WriteString(tuiHelpStyle.Render("先执行 fundsync sync yjb / fundsync sync xb / fundsync sync all。"))
+			b.WriteString("没有找到 fundpeek 导入分组下的基金持仓。\n")
+			b.WriteString(tuiHelpStyle.Render("先执行 fundpeek sync yjb / fundpeek sync xb / fundpeek sync all。"))
 			b.WriteString("\n")
 		}
 		return b.String()

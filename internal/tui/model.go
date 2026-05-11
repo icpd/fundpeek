@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/icpd/fundsync/internal/valuation"
+	"github.com/icpd/fundpeek/internal/valuation"
 )
 
 type Position struct {

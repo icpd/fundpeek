@@ -56,7 +56,7 @@ type SyncInput struct {
 func NewDeviceID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("fundsync-%d", time.Now().UnixNano())
+		return fmt.Sprintf("fundpeek-%d", time.Now().UnixNano())
 	}
-	return "fundsync-" + hex.EncodeToString(b[:])
+	return "fundpeek-" + hex.EncodeToString(b[:])
 }

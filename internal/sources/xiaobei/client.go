@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/icpd/fundsync/internal/httpclient"
+	"github.com/icpd/fundpeek/internal/httpclient"
 )
 
 const (
@@ -42,7 +42,7 @@ func NewClient(token, unionID string) *Client {
 		SetRetryCount(2).
 		SetRetryWaitTime(500*time.Millisecond).
 		SetHeader("Content-Type", "application/json").
-		SetHeader("User-Agent", "fundsync/xiaobei")
+		SetHeader("User-Agent", "fundpeek/xiaobei")
 
 	return &Client{
 		http:    c,

@@ -7,8 +7,8 @@ import (
 
 func TestLoadPersistsDeviceID(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("FUNDSYNC_CONFIG_DIR", dir)
-	t.Setenv("FUNDSYNC_DEVICE_ID", "")
+	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
+	t.Setenv("FUNDPEEK_DEVICE_ID", "")
 
 	first, err := Load()
 	if err != nil {

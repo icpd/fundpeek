@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundpeek/internal/model"
 )
 
 type Report struct {

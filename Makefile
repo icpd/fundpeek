@@ -9,6 +9,6 @@ vet:
 	GOCACHE=$(GOCACHE) go vet ./...
 
 build:
-	GOCACHE=$(GOCACHE) go build -o $(CURDIR)/fundsync ./cmd/fundsync
+	GOCACHE=$(GOCACHE) go build -o $(CURDIR)/fundpeek ./cmd/fundpeek
 
 verify: test vet build

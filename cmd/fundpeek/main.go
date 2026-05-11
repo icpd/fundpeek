@@ -9,18 +9,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icpd/fundsync/internal/app"
-	"github.com/icpd/fundsync/internal/authui"
-	"github.com/icpd/fundsync/internal/config"
-	"github.com/icpd/fundsync/internal/console"
-	"github.com/icpd/fundsync/internal/credential"
-	"github.com/icpd/fundsync/internal/model"
-	"github.com/icpd/fundsync/internal/tui"
+	"github.com/icpd/fundpeek/internal/app"
+	"github.com/icpd/fundpeek/internal/authui"
+	"github.com/icpd/fundpeek/internal/config"
+	"github.com/icpd/fundpeek/internal/console"
+	"github.com/icpd/fundpeek/internal/credential"
+	"github.com/icpd/fundpeek/internal/model"
+	"github.com/icpd/fundpeek/internal/tui"
 )
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "fundsync: %v\n", err)
+		fmt.Fprintf(os.Stderr, "fundpeek: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -212,18 +212,18 @@ func hasYesFlag(args []string) bool {
 }
 
 func printUsage() {
-	fmt.Println(`fundsync
+	fmt.Println(`fundpeek
 
 Usage:
-  fundsync auth real|r
-  fundsync auth yjb|yj
-  fundsync auth xb|xbyj
-  fundsync status
-  fundsync tui
-  fundsync sync yjb|yj
-  fundsync sync xb|xbyj
-  fundsync sync all|a
-  fundsync backup
-  fundsync restore <backup-file> [--yes]
-  fundsync logout <real|r|yjb|yj|xb|xbyj>`)
+  fundpeek auth real|r
+  fundpeek auth yjb|yj
+  fundpeek auth xb|xbyj
+  fundpeek status
+  fundpeek tui
+  fundpeek sync yjb|yj
+  fundpeek sync xb|xbyj
+  fundpeek sync all|a
+  fundpeek backup
+  fundpeek restore <backup-file> [--yes]
+  fundpeek logout <real|r|yjb|yj|xb|xbyj>`)
 }

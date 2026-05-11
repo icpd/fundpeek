@@ -72,11 +72,11 @@ func TestNormalizeSyncSourceRejectsReal(t *testing.T) {
 
 func TestHelpDoesNotCreateConfigFiles(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("FUNDSYNC_CONFIG_DIR", dir)
+	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
 	oldArgs := os.Args
 	t.Cleanup(func() { os.Args = oldArgs })
 
-	os.Args = []string{"fundsync", "help"}
+	os.Args = []string{"fundpeek", "help"}
 	if err := run(); err != nil {
 		t.Fatal(err)
 	}
@@ -90,11 +90,11 @@ func TestHelpDoesNotCreateConfigFiles(t *testing.T) {
 
 func TestUnknownCommandDoesNotCreateConfigFiles(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("FUNDSYNC_CONFIG_DIR", dir)
+	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
 	oldArgs := os.Args
 	t.Cleanup(func() { os.Args = oldArgs })
 
-	os.Args = []string{"fundsync", "wat"}
+	os.Args = []string{"fundpeek", "wat"}
 	if err := run(); err == nil {
 		t.Fatal("expected unknown command error")
 	}

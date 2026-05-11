@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundpeek/internal/model"
 )
 
 var ErrNotAuthenticated = errors.New("not authenticated")
