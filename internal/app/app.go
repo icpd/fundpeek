@@ -251,6 +251,18 @@ func (a *App) Backup(ctx context.Context) (string, error) {
 	return backup.Save(a.cfg.BackupDir, cred.UserID, data)
 }
 
+func (a *App) RealData(ctx context.Context) (map[string]any, error) {
+	cred, err := a.realCred(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := a.real.FetchUserConfig(ctx, cred)
+	if err != nil {
+		return nil, err
+	}
+	return real.CloneData(cfg.Data)
+}
+
 func (a *App) Restore(ctx context.Context, path string) error {
 	cred, err := a.realCred(ctx)
 	if err != nil {

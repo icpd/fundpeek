@@ -15,6 +15,7 @@ import (
 	"github.com/icpd/fundsync/internal/console"
 	"github.com/icpd/fundsync/internal/credential"
 	"github.com/icpd/fundsync/internal/model"
+	"github.com/icpd/fundsync/internal/tui"
 )
 
 func main() {
@@ -49,11 +50,17 @@ func run() error {
 	}
 	a := app.New(cfg, store)
 
-	timeout := 2 * time.Minute
-	if args[0] == "auth" {
-		timeout = 10 * time.Minute
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if args[0] == "tui" {
+		ctx, cancel = context.WithCancel(context.Background())
+	} else {
+		timeout := 2 * time.Minute
+		if args[0] == "auth" {
+			timeout = 10 * time.Minute
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	switch args[0] {
@@ -68,6 +75,11 @@ func run() error {
 		return runAuth(ctx, a, source)
 	case "status":
 		return a.Status(ctx)
+	case "tui":
+		if !console.IsTerminal(os.Stdout) {
+			return errors.New("tui requires an interactive terminal")
+		}
+		return tui.Run(ctx, a)
 	case "sync":
 		if len(args) < 2 {
 			return errors.New("missing sync source: yjb/yj, xb/xbyj, all/a")
@@ -120,7 +132,7 @@ func isHelpCommand(command string) bool {
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "auth", "status", "sync", "backup", "restore", "logout":
+	case "auth", "status", "sync", "backup", "restore", "logout", "tui":
 		return true
 	default:
 		return false
@@ -207,6 +219,7 @@ Usage:
   fundsync auth yjb|yj
   fundsync auth xb|xbyj
   fundsync status
+  fundsync tui
   fundsync sync yjb|yj
   fundsync sync xb|xbyj
   fundsync sync all|a
