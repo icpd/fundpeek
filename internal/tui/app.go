@@ -20,12 +20,17 @@ type model struct {
 	ctx context.Context
 	app *fundapp.App
 
-	rows        []Row
-	loading     bool
-	errText     string
-	lastRefresh time.Time
-	width       int
-	height      int
+	rows         []Row
+	cursor       int
+	selectedCode string
+	loading      bool
+	errText      string
+	lastRefresh  time.Time
+	width        int
+	height       int
+
+	page   page
+	detail detailState
 }
 
 type loadedMsg struct {
@@ -33,13 +38,47 @@ type loadedMsg struct {
 	err  error
 }
 
+type detailLoadedMsg struct {
+	data DetailData
+	err  error
+}
+
 type tickMsg time.Time
+
+type page int
+
+const (
+	pageList page = iota
+	pageDetail
+)
 
 type summary struct {
 	TodayProfit        float64
 	HasProfit          bool
 	EstimatedChange    float64
 	HasEstimatedChange bool
+}
+
+type detailState struct {
+	Fund        Position
+	Data        DetailData
+	Loading     bool
+	ErrText     string
+	LastRefresh time.Time
+}
+
+type DetailData struct {
+	ReportDate        string
+	IsRecent          bool
+	Rows              []StockHoldingRow
+	PartialQuoteErr   bool
+	HoldingsAvailable bool
+}
+
+type StockHoldingRow struct {
+	Holding  valuation.StockHolding
+	Quote    valuation.StockQuote
+	QuoteErr bool
 }
 
 var (
@@ -65,9 +104,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc", "backspace":
+			if m.page == pageDetail {
+				m.page = pageList
+				return m, nil
+			}
+			return m, tea.Quit
+		case "up", "k":
+			if m.page == pageList {
+				m.moveCursor(-1)
+			}
+		case "down", "j":
+			if m.page == pageList {
+				m.moveCursor(1)
+			}
+		case "enter":
+			if m.page == pageList && len(m.rows) > 0 {
+				m.openDetail(m.rows[m.cursor].Position)
+				return m, m.loadDetail()
+			}
 		case "r":
+			if m.page == pageDetail {
+				if !m.detail.Loading {
+					m.detail.Loading = true
+					m.detail.ErrText = ""
+					return m, m.loadDetail()
+				}
+				break
+			}
 			if !m.loading {
 				m.loading = true
 				m.errText = ""
@@ -78,6 +144,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tickMsg:
+		if m.page == pageDetail {
+			if !m.detail.Loading {
+				m.detail.Loading = true
+				m.detail.ErrText = ""
+				return m, tea.Batch(tick(), m.loadDetail())
+			}
+			return m, tick()
+		}
 		if !m.loading {
 			m.loading = true
 			m.errText = ""
@@ -91,13 +165,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.errText = ""
-		m.rows = msg.rows
+		m.applyLoadedRows(msg.rows)
 		m.lastRefresh = time.Now()
+	case detailLoadedMsg:
+		m.detail.Loading = false
+		if msg.err != nil {
+			m.detail.ErrText = msg.err.Error()
+			break
+		}
+		m.detail.ErrText = ""
+		m.detail.Data = msg.data
+		m.detail.LastRefresh = time.Now()
 	}
 	return m, nil
 }
 
 func (m model) View() string {
+	if m.page == pageDetail {
+		return renderDetail(m.detail)
+	}
 	var b strings.Builder
 	b.WriteString(tuiTitleStyle.Render("fundpeek tui"))
 	b.WriteString("\n")
@@ -109,7 +195,7 @@ func (m model) View() string {
 	if !m.lastRefresh.IsZero() {
 		status += "  updated " + m.lastRefresh.Format("15:04:05")
 	}
-	b.WriteString(tuiHelpStyle.Render(status + "  r refresh  q quit"))
+	b.WriteString(tuiHelpStyle.Render(status + "  ↑/↓ select  enter detail  r refresh  q quit"))
 	b.WriteString("\n\n")
 
 	if m.errText != "" {
@@ -118,7 +204,7 @@ func (m model) View() string {
 	}
 	if len(m.rows) == 0 {
 		if m.loading {
-			b.WriteString("正在读取 real 同步数据并刷新估值...\n")
+			b.WriteString("正在获取数据...\n")
 		} else {
 			b.WriteString("没有找到 fundpeek 导入分组下的基金持仓。\n")
 			b.WriteString(tuiHelpStyle.Render("先执行 fundpeek sync yjb / fundpeek sync xb / fundpeek sync all。"))
@@ -127,7 +213,7 @@ func (m model) View() string {
 		return b.String()
 	}
 
-	b.WriteString(renderTable(m.rows))
+	b.WriteString(renderTableWithCursor(m.rows, m.cursor))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -137,6 +223,56 @@ func (m model) load() tea.Cmd {
 		rows, err := LoadRows(m.ctx, m.app)
 		return loadedMsg{rows: rows, err: err}
 	}
+}
+
+func (m model) loadDetail() tea.Cmd {
+	fund := m.detail.Fund
+	return func() tea.Msg {
+		data, err := LoadDetail(m.ctx, fund)
+		return detailLoadedMsg{data: data, err: err}
+	}
+}
+
+func (m *model) moveCursor(delta int) {
+	if len(m.rows) == 0 {
+		m.cursor = 0
+		m.selectedCode = ""
+		return
+	}
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = len(m.rows) - 1
+	}
+	m.selectedCode = m.rows[m.cursor].Code
+}
+
+func (m *model) applyLoadedRows(rows []Row) {
+	m.rows = rows
+	if len(rows) == 0 {
+		m.cursor = 0
+		m.selectedCode = ""
+		return
+	}
+	code := m.selectedCode
+	if code == "" && m.cursor >= 0 && m.cursor < len(m.rows) {
+		code = m.rows[m.cursor].Code
+	}
+	m.cursor = 0
+	for i, row := range rows {
+		if row.Code == code {
+			m.cursor = i
+			break
+		}
+	}
+	m.selectedCode = rows[m.cursor].Code
+}
+
+func (m *model) openDetail(fund Position) {
+	m.page = pageDetail
+	m.detail = detailState{Fund: fund, Loading: true}
 }
 
 func tick() tea.Cmd {
@@ -194,6 +330,41 @@ func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
 	return rows, nil
 }
 
+func LoadDetail(ctx context.Context, fund Position) (DetailData, error) {
+	client := valuation.NewClient()
+	holdings, err := client.FetchFundStockHoldings(ctx, fund.Code)
+	if err != nil {
+		return DetailData{}, err
+	}
+	data := DetailData{
+		ReportDate:        holdings.ReportDate,
+		IsRecent:          holdings.IsRecent,
+		HoldingsAvailable: len(holdings.Holdings) > 0,
+	}
+	if len(holdings.Holdings) == 0 {
+		return data, nil
+	}
+	codes := make([]string, 0, len(holdings.Holdings))
+	for _, holding := range holdings.Holdings {
+		codes = append(codes, holding.Code)
+	}
+	quotes, quoteErr := client.FetchTencentStockQuotes(ctx, codes)
+	if quoteErr != nil {
+		data.PartialQuoteErr = true
+	}
+	for _, holding := range holdings.Holdings {
+		tc := valuation.NormalizeTencentCode(holding.Code)
+		quote, ok := quotes[tc]
+		row := StockHoldingRow{Holding: holding, Quote: quote}
+		if quoteErr != nil || tc == "" || !ok || (!quote.HasChangePercent && !quote.HasPrice) {
+			row.QuoteErr = true
+			data.PartialQuoteErr = true
+		}
+		data.Rows = append(data.Rows, row)
+	}
+	return data, nil
+}
+
 func sortRows(rows []Row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		left, right := rows[i], rows[j]
@@ -208,6 +379,10 @@ func sortRows(rows []Row) {
 }
 
 func renderTable(rows []Row) string {
+	return renderTableWithCursor(rows, -1)
+}
+
+func renderTableWithCursor(rows []Row, cursor int) string {
 	const (
 		fundWidth   = 34
 		estWidth    = 12
@@ -224,7 +399,12 @@ func renderTable(rows []Row) string {
 	b.WriteString("\n")
 	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", fundWidth+estWidth+profitWidth+latestWidth)))
 	b.WriteString("\n")
-	for _, row := range rows {
+	for i, row := range rows {
+		prefix := "  "
+		if i == cursor {
+			prefix = "> "
+		}
+		b.WriteString(prefix)
 		b.WriteString(cell(fundLabel(row), fundWidth, lipgloss.Left))
 		b.WriteString(cell(formatPercent(row.Quote.GSZZL, row.Quote.HasGSZZL), estWidth, lipgloss.Right))
 		b.WriteString(cell(formatMoney(row.TodayProfit, row.HasProfit), profitWidth, lipgloss.Right))
@@ -243,6 +423,78 @@ func renderTable(rows []Row) string {
 	b.WriteString(cell(formatMoney(total.TodayProfit, total.HasProfit), profitWidth, lipgloss.Right))
 	b.WriteString(cell("", latestWidth, lipgloss.Right))
 	b.WriteString("\n")
+	return b.String()
+}
+
+func renderDetail(state detailState) string {
+	const (
+		stockWidth  = 34
+		chgWidth    = 12
+		priceWidth  = 12
+		weightWidth = 12
+		sharesWidth = 14
+		valueWidth  = 14
+	)
+	var b strings.Builder
+	b.WriteString(tuiTitleStyle.Render(fundPositionLabel(state.Fund)))
+	b.WriteString("\n")
+
+	status := "ready"
+	if state.Loading {
+		status = "refreshing..."
+	}
+	if state.Data.ReportDate != "" {
+		status += "  report " + state.Data.ReportDate
+	}
+	if !state.LastRefresh.IsZero() {
+		status += "  updated " + state.LastRefresh.Format("15:04:05")
+	}
+	b.WriteString(tuiHelpStyle.Render(status + "  esc back  r refresh  q quit"))
+	b.WriteString("\n\n")
+
+	if state.ErrText != "" {
+		b.WriteString(tuiErrStyle.Render(state.ErrText))
+		b.WriteString("\n\n")
+	}
+	if state.Data.PartialQuoteErr {
+		b.WriteString(tuiErrStyle.Render("行情不完整，失败项显示 --"))
+		b.WriteString("\n\n")
+	}
+	if len(state.Data.Rows) == 0 {
+		if state.Loading {
+			b.WriteString("正在加载股票持仓和实时行情...\n")
+		} else if state.Data.ReportDate != "" && !state.Data.IsRecent {
+			b.WriteString("最新持仓报告期已超过 6 个月，未展示过期持仓。\n")
+		} else {
+			b.WriteString("没有找到可展示的股票持仓。\n")
+		}
+		return b.String()
+	}
+
+	b.WriteString(tuiHeaderStyle.Render(
+		cell("股票名称/代码", stockWidth, lipgloss.Left) +
+			cell("涨跌幅", chgWidth, lipgloss.Right) +
+			cell("最新价", priceWidth, lipgloss.Right) +
+			cell("占净值", weightWidth, lipgloss.Right) +
+			cell("持股数", sharesWidth, lipgloss.Right) +
+			cell("持仓市值", valueWidth, lipgloss.Right),
+	))
+	b.WriteString("\n")
+	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", stockWidth+chgWidth+priceWidth+weightWidth+sharesWidth+valueWidth)))
+	b.WriteString("\n")
+	for _, row := range state.Data.Rows {
+		b.WriteString(cell(stockLabel(row), stockWidth, lipgloss.Left))
+		b.WriteString(cell(formatPercent(row.Quote.ChangePercent, row.Quote.HasChangePercent), chgWidth, lipgloss.Right))
+		b.WriteString(cell(formatNumber(row.Quote.Price, row.Quote.HasPrice), priceWidth, lipgloss.Right))
+		b.WriteString(cell(formatPercent(row.Holding.Weight, row.Holding.HasWeight), weightWidth, lipgloss.Right))
+		b.WriteString(cell(formatNumber(row.Holding.Shares, row.Holding.HasShares), sharesWidth, lipgloss.Right))
+		b.WriteString(cell(formatNumber(row.Holding.MarketValue, row.Holding.HasMarketValue), valueWidth, lipgloss.Right))
+		if row.QuoteErr {
+			b.WriteString(" ")
+			b.WriteString(tuiErrStyle.Render("!"))
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
@@ -285,6 +537,25 @@ func fundLabel(row Row) string {
 	return fmt.Sprintf("%s #%s", name, row.Code)
 }
 
+func fundPositionLabel(pos Position) string {
+	name := strings.TrimSpace(pos.Name)
+	if name == "" {
+		name = "未知基金"
+	}
+	return fmt.Sprintf("%s #%s", name, pos.Code)
+}
+
+func stockLabel(row StockHoldingRow) string {
+	name := strings.TrimSpace(row.Holding.Name)
+	if name == "" {
+		name = strings.TrimSpace(row.Quote.Name)
+	}
+	if name == "" {
+		name = "未知股票"
+	}
+	return fmt.Sprintf("%s #%s", name, row.Holding.Code)
+}
+
 func formatPercent(value float64, ok bool) string {
 	if !ok {
 		return "--"
@@ -311,4 +582,11 @@ func formatMoney(value float64, ok bool) string {
 		return tuiDownStyle.Render(text)
 	}
 	return text
+}
+
+func formatNumber(value float64, ok bool) string {
+	if !ok {
+		return "--"
+	}
+	return fmt.Sprintf("%.2f", value)
 }

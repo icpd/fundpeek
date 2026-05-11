@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icpd/fundpeek/internal/valuation"
 )
 
@@ -146,5 +147,109 @@ func TestRenderTableSummaryDoesNotShowLatestChangePlaceholder(t *testing.T) {
 	summaryLine := lines[len(lines)-1]
 	if strings.Contains(summaryLine, "--") {
 		t.Fatalf("summary line should not show latest-change placeholder: %q", summaryLine)
+	}
+}
+
+func TestListLoadingViewUsesConciseCopy(t *testing.T) {
+	out := model{loading: true}.View()
+
+	if !strings.Contains(out, "正在获取数据...") {
+		t.Fatalf("loading view missing concise copy:\n%s", out)
+	}
+	if strings.Contains(out, "正在读取") {
+		t.Fatalf("loading view should not use verbose read copy:\n%s", out)
+	}
+}
+
+func TestMoveCursorClampsToRows(t *testing.T) {
+	m := model{rows: []Row{
+		{Position: Position{Code: "000001"}},
+		{Position: Position{Code: "000002"}},
+	}}
+
+	m.moveCursor(1)
+	m.moveCursor(1)
+	if m.cursor != 1 {
+		t.Fatalf("cursor after moving down = %d, want 1", m.cursor)
+	}
+	m.moveCursor(-1)
+	m.moveCursor(-1)
+	if m.cursor != 0 {
+		t.Fatalf("cursor after moving up = %d, want 0", m.cursor)
+	}
+}
+
+func TestLoadedRowsKeepsSelectionByCodeAfterSort(t *testing.T) {
+	m := model{
+		cursor:       1,
+		selectedCode: "000002",
+		rows: []Row{
+			{Position: Position{Code: "000001"}},
+			{Position: Position{Code: "000002"}},
+		},
+	}
+
+	next := []Row{
+		{Position: Position{Code: "000002"}, Quote: valuation.Quote{GSZZL: 3, HasGSZZL: true}},
+		{Position: Position{Code: "000001"}, Quote: valuation.Quote{GSZZL: 1, HasGSZZL: true}},
+	}
+	m.applyLoadedRows(next)
+
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 for selected code after refresh", m.cursor)
+	}
+	if m.selectedCode != "000002" {
+		t.Fatalf("selectedCode = %q, want 000002", m.selectedCode)
+	}
+}
+
+func TestEnterAndEscSwitchBetweenListAndDetail(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.page != pageDetail {
+		t.Fatalf("page after enter = %v, want detail", m.page)
+	}
+	if m.detail.Fund.Code != "000001" {
+		t.Fatalf("detail fund = %#v, want code 000001", m.detail.Fund)
+	}
+	if cmd == nil {
+		t.Fatal("expected detail load command")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	if m.page != pageList {
+		t.Fatalf("page after esc = %v, want list", m.page)
+	}
+	if cmd != nil {
+		t.Fatalf("esc should not create command: %#v", cmd)
+	}
+}
+
+func TestRenderDetailShowsHoldingsAndPartialQuoteFailure(t *testing.T) {
+	out := renderDetail(detailState{
+		Fund: Position{Code: "000001", Name: "华夏成长"},
+		Data: DetailData{
+			ReportDate: "2026-03-31",
+			Rows: []StockHoldingRow{
+				{
+					Holding: valuation.StockHolding{Code: "600519", Name: "贵州茅台", Weight: 9.87, HasWeight: true, Shares: 12300, HasShares: true, MarketValue: 1820.5, HasMarketValue: true},
+					Quote:   valuation.StockQuote{Name: "贵州茅台", ChangePercent: 1.23, HasChangePercent: true, Price: 1820.5, HasPrice: true},
+				},
+				{
+					Holding:  valuation.StockHolding{Code: "00700.HK", Name: "腾讯控股", Weight: 8.01, HasWeight: true},
+					QuoteErr: true,
+				},
+			},
+			PartialQuoteErr: true,
+		},
+	})
+
+	for _, want := range []string{"华夏成长 #000001", "2026-03-31", "贵州茅台 #600519", "+1.23%", "1820.50", "9.87%", "腾讯控股 #00700.HK", "行情不完整"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("renderDetail missing %q:\n%s", want, out)
+		}
 	}
 }
