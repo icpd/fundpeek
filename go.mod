@@ -1,6 +1,6 @@
 module github.com/icpd/fundsync
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

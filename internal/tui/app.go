@@ -36,12 +36,12 @@ type loadedMsg struct {
 type tickMsg time.Time
 
 var (
-	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	tuiHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	tuiErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	tuiHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245"))
-	tuiUpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	tuiDownStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
+	tuiHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	tuiErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("95"))
+	tuiHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("242"))
+	tuiUpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	tuiDownStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 )
 
 func Run(ctx context.Context, a *fundapp.App) error {
@@ -183,10 +183,21 @@ func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
 	wg.Wait()
 
 	rows := BuildRows(positions, quotes, errs)
-	sort.SliceStable(rows, func(i, j int) bool {
-		return rows[i].Code < rows[j].Code
-	})
+	sortRows(rows)
 	return rows, nil
+}
+
+func sortRows(rows []Row) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		left, right := rows[i], rows[j]
+		if left.Quote.HasGSZZL != right.Quote.HasGSZZL {
+			return left.Quote.HasGSZZL
+		}
+		if left.Quote.HasGSZZL && left.Quote.GSZZL != right.Quote.GSZZL {
+			return left.Quote.GSZZL > right.Quote.GSZZL
+		}
+		return left.Code < right.Code
+	})
 }
 
 func renderTable(rows []Row) string {
@@ -199,7 +210,7 @@ func renderTable(rows []Row) string {
 	var b strings.Builder
 	b.WriteString(tuiHeaderStyle.Render(
 		cell("基金名称/代码", fundWidth, lipgloss.Left) +
-			cell("估值涨幅", estWidth, lipgloss.Right) +
+			cell("估值涨幅↓", estWidth, lipgloss.Right) +
 			cell("当日收益", profitWidth, lipgloss.Right) +
 			cell("最新涨幅", latestWidth, lipgloss.Right),
 	))

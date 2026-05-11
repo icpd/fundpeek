@@ -72,3 +72,23 @@ func TestTodayProfitFallsBackToLatestNetValue(t *testing.T) {
 		t.Fatalf("profit = %f, want 5", got)
 	}
 }
+
+func TestSortRowsByEstimatedChangeDescendingWithMissingValuesLast(t *testing.T) {
+	rows := []Row{
+		{Position: Position{Code: "000004"}, Quote: valuation.Quote{GSZZL: 2.10, HasGSZZL: true}},
+		{Position: Position{Code: "000001"}, Quote: valuation.Quote{GSZZL: -0.50, HasGSZZL: true}},
+		{Position: Position{Code: "000003"}},
+		{Position: Position{Code: "000002"}, Quote: valuation.Quote{GSZZL: 2.10, HasGSZZL: true}},
+		{Position: Position{Code: "000005"}},
+	}
+
+	sortRows(rows)
+
+	got := []string{rows[0].Code, rows[1].Code, rows[2].Code, rows[3].Code, rows[4].Code}
+	want := []string{"000002", "000004", "000001", "000003", "000005"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sorted codes = %#v, want %#v", got, want)
+		}
+	}
+}
