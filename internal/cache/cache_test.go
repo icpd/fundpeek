@@ -33,6 +33,43 @@ func TestFileCacheReturnsFreshEntryWithoutFetching(t *testing.T) {
 	}
 }
 
+func TestFileCacheGetReturnsValueAndFetchedAt(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	store := NewFileCache(dir, func() time.Time { return now })
+	if err := store.Set("real_data", map[string]any{"fund": "000001"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	entry, ok, err := store.Get("real_data", &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("cache entry should exist")
+	}
+	if !entry.FetchedAt.Equal(now.UTC()) {
+		t.Fatalf("FetchedAt = %s, want %s", entry.FetchedAt, now.UTC())
+	}
+	if got["fund"] != "000001" {
+		t.Fatalf("fund = %v, want 000001", got["fund"])
+	}
+}
+
+func TestFileCacheGetReportsMissingEntry(t *testing.T) {
+	store := NewFileCache(t.TempDir(), time.Now)
+
+	var got map[string]any
+	_, ok, err := store.Get("missing", &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("missing cache entry should return ok=false")
+	}
+}
+
 func TestFileCacheFetchesExpiredEntryAndStoresResult(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)

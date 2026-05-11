@@ -20,11 +20,19 @@ type envelope struct {
 	Value     json.RawMessage `json:"value"`
 }
 
+type Entry struct {
+	FetchedAt time.Time
+}
+
 func NewFileCache(dir string, now func() time.Time) *FileCache {
 	if now == nil {
 		now = time.Now
 	}
 	return &FileCache{dir: dir, now: now}
+}
+
+func (c *FileCache) Now() time.Time {
+	return c.now()
 }
 
 func (c *FileCache) GetOrFetch(key string, ttl time.Duration, out any, fetch func() (any, error)) error {
@@ -66,6 +74,41 @@ func (c *FileCache) GetFresh(key string, ttl time.Duration, out any) (bool, erro
 		return false, err
 	}
 	return true, nil
+}
+
+func (c *FileCache) Get(key string, out any) (Entry, bool, error) {
+	if out == nil {
+		return Entry{}, false, fmt.Errorf("cache output is nil")
+	}
+	entry, err := c.read(key)
+	if errors.Is(err, os.ErrNotExist) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, err
+	}
+	if err := json.Unmarshal(entry.Value, out); err != nil {
+		return Entry{}, false, err
+	}
+	return Entry{FetchedAt: entry.FetchedAt}, true, nil
+}
+
+func (c *FileCache) GetFreshOrFetch(key string, fresh func(Entry) bool, out any, fetch func() (any, error)) error {
+	entry, ok, err := c.Get(key, out)
+	if err != nil {
+		return err
+	}
+	if ok && fresh(entry) {
+		return nil
+	}
+	value, err := fetch()
+	if err != nil {
+		return err
+	}
+	if err := c.Set(key, value); err != nil {
+		return err
+	}
+	return assign(out, value)
 }
 
 func (c *FileCache) Set(key string, value any) error {

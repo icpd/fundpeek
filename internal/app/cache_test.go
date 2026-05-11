@@ -54,7 +54,35 @@ func TestRealDataUsesFreshCache(t *testing.T) {
 	}
 }
 
-func TestApplySyncInvalidatesRealDataCache(t *testing.T) {
+func TestRealDataFetchesRemoteWhenCacheMissingAndStoresResult(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, fake := newCacheTestApp(t, now)
+
+	got, err := a.RealData(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.fetches != 1 {
+		t.Fatalf("FetchUserConfig calls = %d, want 1", fake.fetches)
+	}
+	if got["funds"].([]any)[0].(map[string]any)["code"] != "fresh" {
+		t.Fatalf("unexpected remote data: %#v", got)
+	}
+
+	fake.data = map[string]any{"funds": []any{map[string]any{"code": "new-remote"}}}
+	got, err = a.RealData(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.fetches != 1 {
+		t.Fatalf("FetchUserConfig calls after cached read = %d, want 1", fake.fetches)
+	}
+	if got["funds"].([]any)[0].(map[string]any)["code"] != "fresh" {
+		t.Fatalf("RealData should return stored cache after first fetch: %#v", got)
+	}
+}
+
+func TestApplySyncUpdatesRealDataCache(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	a, fake := newCacheTestApp(t, now)
 	if err := a.cache.Set("real_data", map[string]any{"funds": []any{map[string]any{"code": "stale"}}}); err != nil {
@@ -87,12 +115,21 @@ func TestApplySyncInvalidatesRealDataCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fake.fetches != 2 {
-		t.Fatalf("FetchUserConfig calls = %d, want 2", fake.fetches)
+	if fake.fetches != 1 {
+		t.Fatalf("FetchUserConfig calls = %d, want 1", fake.fetches)
 	}
-	if got["funds"].([]any)[0].(map[string]any)["code"] == "stale" {
-		t.Fatalf("cache was not invalidated: %#v", got)
+	if !fundsContainCode(got["funds"], "000001") {
+		t.Fatalf("cache was not updated from synced data: %#v", got)
 	}
+}
+
+func fundsContainCode(value any, code string) bool {
+	for _, item := range value.([]any) {
+		if item.(map[string]any)["code"] == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInvalidateFundStockHoldingsCache(t *testing.T) {

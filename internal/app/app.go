@@ -22,8 +22,6 @@ import (
 	"github.com/icpd/fundpeek/internal/valuation"
 )
 
-const realDataCacheTTL = 24 * time.Hour
-
 type realClient interface {
 	SendOTP(context.Context, string) error
 	VerifyOTP(context.Context, string, string) (model.RealCredential, error)
@@ -279,16 +277,20 @@ func (a *App) RealData(ctx context.Context) (map[string]any, error) {
 		return real.CloneData(cfg.Data)
 	}
 	var data map[string]any
-	err = a.cache.GetOrFetch("real_data", realDataCacheTTL, &data, func() (any, error) {
-		cfg, err := a.real.FetchUserConfig(ctx, cred)
-		if err != nil {
-			return nil, err
-		}
-		return real.CloneData(cfg.Data)
-	})
+	if _, ok, err := a.cache.Get("real_data", &data); err != nil {
+		return nil, err
+	} else if ok {
+		return real.CloneData(data)
+	}
+	cfg, err := a.real.FetchUserConfig(ctx, cred)
 	if err != nil {
 		return nil, err
 	}
+	data, err = real.CloneData(cfg.Data)
+	if err != nil {
+		return nil, err
+	}
+	a.setRealDataCache(data)
 	return real.CloneData(data)
 }
 
@@ -325,7 +327,7 @@ func (a *App) Restore(ctx context.Context, path string) error {
 	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, snapshot.Data); err != nil {
 		return fmt.Errorf("%w; restore pre-backup saved at %s", err, backupPath)
 	}
-	a.InvalidateRealData()
+	a.setRealDataCache(snapshot.Data)
 	fmt.Println("restore pre-backup:", backupPath)
 	return nil
 }
@@ -368,10 +370,16 @@ func (a *App) applySync(ctx context.Context, inputs []model.SyncInput) error {
 	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, data); err != nil {
 		return fmt.Errorf("%w; backup saved at %s", err, backupPath)
 	}
-	a.InvalidateRealData()
+	a.setRealDataCache(data)
 	fmt.Println("backup:", backupPath)
 	fmt.Println("real upsert: ok")
 	return nil
+}
+
+func (a *App) setRealDataCache(data map[string]any) {
+	if a.cache != nil {
+		_ = a.cache.Set("real_data", data)
+	}
 }
 
 func (a *App) InvalidateRealData() {
