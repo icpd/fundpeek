@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	fundapp "github.com/icpd/fundpeek/internal/app"
@@ -28,6 +29,7 @@ type model struct {
 	lastRefresh  time.Time
 	width        int
 	height       int
+	spinner      spinner.Model
 
 	page   page
 	detail detailState
@@ -102,17 +104,24 @@ var (
 )
 
 func Run(ctx context.Context, a *fundapp.App) error {
-	m := model{ctx: ctx, app: a, loading: true}
+	m := model{ctx: ctx, app: a, loading: true, spinner: newStatusSpinner()}
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 	return err
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.load(), tick())
+	return tea.Batch(m.load(), tick(), m.spinnerTickCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !m.loading && (m.page != pageDetail || !m.detail.Loading) {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.statusSpinner().Update(msg)
+		return m, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -134,21 +143,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.page == pageList && len(m.rows) > 0 {
 				m.openDetail(m.rows[m.cursor].Position)
-				return m, m.loadDetail()
+				return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
 			}
 		case "r":
 			if m.page == pageDetail {
 				if !m.detail.Loading {
 					m.detail.Loading = true
 					m.detail.ErrText = ""
-					return m, m.loadDetail()
+					return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
 				}
 				break
 			}
 			if !m.loading {
 				m.loading = true
 				m.errText = ""
-				return m, m.load()
+				return m, tea.Batch(m.load(), m.spinnerTickCmd())
 			}
 		case "R":
 			if m.page == pageDetail {
@@ -162,7 +171,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.detail.Loading = true
 					m.detail.ErrText = ""
-					return m, m.loadDetail()
+					return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
 				}
 				break
 			}
@@ -173,7 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.loading = true
 				m.errText = ""
-				return m, m.load()
+				return m, tea.Batch(m.load(), m.spinnerTickCmd())
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -184,14 +193,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.detail.Loading {
 				m.detail.Loading = true
 				m.detail.ErrText = ""
-				return m, tea.Batch(tick(), m.loadDetail())
+				return m, tea.Batch(tick(), m.loadDetail(), m.spinnerTickCmd())
 			}
 			return m, tick()
 		}
 		if !m.loading {
 			m.loading = true
 			m.errText = ""
-			return m, tea.Batch(tick(), m.load())
+			return m, tea.Batch(tick(), m.load(), m.spinnerTickCmd())
 		}
 		return m, tick()
 	case loadedMsg:
@@ -246,20 +255,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.page == pageDetail {
-		return renderDetail(m.detail)
+		return renderDetailWithSpinner(m.detail, m.statusSpinner().View())
 	}
 	var b strings.Builder
 	b.WriteString(tuiTitleStyle.Render("fundpeek tui"))
 	b.WriteString("\n")
 
-	status := "ready"
-	if m.loading {
-		status = "updating quotes..."
-	}
-	if !m.lastRefresh.IsZero() {
-		status += "  updated " + m.lastRefresh.Format("15:04:05")
-	}
-	b.WriteString(tuiHelpStyle.Render(status + "  ↑/↓ select  enter detail  r refresh  q quit"))
+	b.WriteString(tuiHelpStyle.Render(renderStatusBar(
+		m.loading,
+		m.errText != "",
+		m.lastRefresh,
+		"↑/↓ select  enter detail  r refresh  q quit",
+		m.statusSpinner().View(),
+	)))
 	b.WriteString("\n\n")
 
 	if m.errText != "" {
@@ -360,6 +368,24 @@ func (m *model) applyLoadedRows(rows []Row) {
 func (m *model) openDetail(fund Position) {
 	m.page = pageDetail
 	m.detail = detailState{Fund: fund, Loading: true}
+}
+
+func (m *model) ensureStatusSpinner() {
+	if m.spinner.ID() == 0 {
+		m.spinner = newStatusSpinner()
+	}
+}
+
+func (m model) statusSpinner() spinner.Model {
+	if m.spinner.ID() == 0 {
+		return newStatusSpinner()
+	}
+	return m.spinner
+}
+
+func (m *model) spinnerTickCmd() tea.Cmd {
+	m.ensureStatusSpinner()
+	return m.spinner.Tick
 }
 
 func tick() tea.Cmd {
@@ -647,6 +673,10 @@ func fundListNameWidth(windowWidth int) int {
 }
 
 func renderDetail(state detailState) string {
+	return renderDetailWithSpinner(state, newStatusSpinner().View())
+}
+
+func renderDetailWithSpinner(state detailState, spinnerView string) string {
 	const (
 		stockWidth  = 34
 		chgWidth    = 12
@@ -659,17 +689,17 @@ func renderDetail(state detailState) string {
 	b.WriteString(tuiTitleStyle.Render(fundPositionLabel(state.Fund)))
 	b.WriteString("\n")
 
-	status := "ready"
-	if state.Loading {
-		status = "updating quotes..."
-	}
+	help := "esc back  r refresh  q quit"
 	if state.Data.ReportDate != "" {
-		status += "  report " + state.Data.ReportDate
+		help = "report " + state.Data.ReportDate + "  " + help
 	}
-	if !state.LastRefresh.IsZero() {
-		status += "  updated " + state.LastRefresh.Format("15:04:05")
-	}
-	b.WriteString(tuiHelpStyle.Render(status + "  esc back  r refresh  q quit"))
+	b.WriteString(tuiHelpStyle.Render(renderStatusBar(
+		state.Loading,
+		state.ErrText != "",
+		state.LastRefresh,
+		help,
+		spinnerView,
+	)))
 	b.WriteString("\n\n")
 
 	if state.ErrText != "" {
@@ -716,6 +746,43 @@ func renderDetail(state detailState) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+const statusLeftWidth = 19
+
+func newStatusSpinner() spinner.Model {
+	return spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(tuiHelpStyle))
+}
+
+func renderStatusBar(loading bool, hasError bool, lastRefresh time.Time, help string, spinnerView string) string {
+	timestamp := "--:--:--"
+	if !lastRefresh.IsZero() {
+		timestamp = lastRefresh.Format("15:04:05")
+	}
+
+	symbol := "✓"
+	label := "updated "
+	if loading {
+		symbol = spinnerView
+		if symbol == "" {
+			symbol = spinner.MiniDot.Frames[0]
+		}
+		label = "updating"
+	} else if hasError {
+		symbol = "!"
+	}
+
+	left := fmt.Sprintf("%s %s %s", symbol, label, timestamp)
+	left = padRight(left, statusLeftWidth)
+	return left + "  " + help
+}
+
+func padRight(text string, width int) string {
+	padding := width - lipgloss.Width(text)
+	if padding <= 0 {
+		return text
+	}
+	return text + strings.Repeat(" ", padding)
 }
 
 func summarizeRows(rows []Row) summary {

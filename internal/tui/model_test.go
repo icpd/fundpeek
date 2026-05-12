@@ -286,6 +286,59 @@ func TestListLoadingViewUsesConciseCopy(t *testing.T) {
 	}
 }
 
+func TestStatusBarKeepsHelpStartStableAcrossStates(t *testing.T) {
+	lastRefresh := time.Date(2026, 5, 12, 15, 4, 5, 0, time.Local)
+	help := "↑/↓ select  enter detail  r refresh  q quit"
+	loading := renderStatusBar(true, false, lastRefresh, help, "⠋")
+	idle := renderStatusBar(false, false, lastRefresh, help, "⠋")
+	err := renderStatusBar(false, true, lastRefresh, help, "⠋")
+
+	helpStart := lipgloss.Width(strings.Split(loading, help)[0])
+	if got := lipgloss.Width(strings.Split(idle, help)[0]); got != helpStart {
+		t.Fatalf("idle help starts at width %d, want %d:\nloading %q\nidle %q", got, helpStart, loading, idle)
+	}
+	if got := lipgloss.Width(strings.Split(err, help)[0]); got != helpStart {
+		t.Fatalf("error help starts at width %d, want %d:\nloading %q\nerror %q", got, helpStart, loading, err)
+	}
+	if !strings.Contains(idle, "✓ updated  15:04:05") {
+		t.Fatalf("idle status should show aligned updated time:\n%s", idle)
+	}
+	if !strings.Contains(err, "! updated  15:04:05") {
+		t.Fatalf("error status should keep stale-data updated wording:\n%s", err)
+	}
+}
+
+func TestStatusBarUsesPlaceholderTimeWithoutRefresh(t *testing.T) {
+	out := renderStatusBar(true, false, time.Time{}, "r refresh", "⠋")
+
+	if !strings.Contains(out, "⠋ updating --:--:--") {
+		t.Fatalf("loading status should show placeholder time:\n%s", out)
+	}
+}
+
+func TestListStatusBarShowsSpinnerRefreshState(t *testing.T) {
+	lastRefresh := time.Date(2026, 5, 12, 15, 4, 5, 0, time.Local)
+	loading := model{loading: true, lastRefresh: lastRefresh}.View()
+	idle := model{lastRefresh: lastRefresh}.View()
+
+	if strings.Contains(loading, "updating quotes...") {
+		t.Fatalf("loading status should not use old copy:\n%s", loading)
+	}
+	if strings.Contains(idle, "ready") {
+		t.Fatalf("idle status should not use old ready copy:\n%s", idle)
+	}
+	if !strings.Contains(idle, "✓ updated  15:04:05") {
+		t.Fatalf("idle status should show updated time:\n%s", idle)
+	}
+
+	loadingLine := strings.Split(loading, "\n")[1]
+	idleLine := strings.Split(idle, "\n")[1]
+	help := "↑/↓ select"
+	if strings.Index(loadingLine, help) != strings.Index(idleLine, help) {
+		t.Fatalf("help start should stay stable:\nloading %q\nidle    %q", loadingLine, idleLine)
+	}
+}
+
 func TestListViewKeepsRefreshHelpCompact(t *testing.T) {
 	out := model{}.View()
 
@@ -308,6 +361,38 @@ func TestDetailLoadingViewUsesCacheAwareCopy(t *testing.T) {
 	}
 	if strings.Contains(out, "正在加载股票持仓") {
 		t.Fatalf("detail loading view should not imply stock holdings are always fetched live:\n%s", out)
+	}
+}
+
+func TestDetailStatusBarUsesUpdatedStateBeforeReportDate(t *testing.T) {
+	lastRefresh := time.Date(2026, 5, 12, 15, 4, 5, 0, time.Local)
+	loading := renderDetail(detailState{
+		Fund:        Position{Code: "000001", Name: "华夏成长"},
+		Loading:     true,
+		LastRefresh: lastRefresh,
+		Data:        DetailData{ReportDate: "2026-03-31"},
+	})
+	idle := renderDetail(detailState{
+		Fund:        Position{Code: "000001", Name: "华夏成长"},
+		LastRefresh: lastRefresh,
+		Data:        DetailData{ReportDate: "2026-03-31"},
+	})
+
+	if strings.Contains(loading, "updating quotes...") {
+		t.Fatalf("detail loading status should not use old copy:\n%s", loading)
+	}
+	if strings.Contains(idle, "ready") {
+		t.Fatalf("detail idle status should not use old ready copy:\n%s", idle)
+	}
+	if !strings.Contains(idle, "✓ updated  15:04:05  report 2026-03-31") {
+		t.Fatalf("detail status should put report date after updated time:\n%s", idle)
+	}
+
+	loadingLine := strings.Split(loading, "\n")[1]
+	idleLine := strings.Split(idle, "\n")[1]
+	help := "esc back"
+	if strings.Index(loadingLine, help) != strings.Index(idleLine, help) {
+		t.Fatalf("detail help start should stay stable:\nloading %q\nidle    %q", loadingLine, idleLine)
 	}
 }
 
