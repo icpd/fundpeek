@@ -38,8 +38,19 @@ type loadedMsg struct {
 	err  error
 }
 
+type fundQuotesLoadedMsg struct {
+	quotes map[string]valuation.Quote
+	errs   map[string]error
+}
+
 type detailLoadedMsg struct {
 	data DetailData
+	err  error
+}
+
+type detailSnapshotMsg struct {
+	data DetailData
+	ok   bool
 	err  error
 }
 
@@ -143,6 +154,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == pageDetail {
 				if !m.detail.Loading {
 					m.app.InvalidateFundStockHoldings(m.detail.Fund.Code)
+					for _, row := range m.detail.Data.Rows {
+						tc := valuation.NormalizeTencentCode(row.Holding.Code)
+						if tc != "" {
+							m.app.InvalidateStockQuote(tc)
+						}
+					}
 					m.detail.Loading = true
 					m.detail.ErrText = ""
 					return m, m.loadDetail()
@@ -151,6 +168,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if !m.loading {
 				m.app.InvalidateRealData()
+				for _, row := range m.rows {
+					m.app.InvalidateFundQuote(row.Code)
+				}
 				m.loading = true
 				m.errText = ""
 				return m, m.load()
@@ -175,14 +195,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 	case loadedMsg:
-		m.loading = false
 		if msg.err != nil {
+			m.loading = false
 			m.errText = msg.err.Error()
 			break
 		}
 		m.errText = ""
 		m.applyLoadedRows(msg.rows)
 		m.lastRefresh = time.Now()
+		return m, m.refreshFundQuotes()
+	case fundQuotesLoadedMsg:
+		m.loading = false
+		if len(msg.errs) > 0 {
+			m.errText = firstErrText(msg.errs)
+		} else {
+			m.errText = ""
+		}
+		positions := make([]Position, 0, len(m.rows))
+		for _, row := range m.rows {
+			positions = append(positions, row.Position)
+		}
+		rows := BuildRows(positions, msg.quotes, msg.errs)
+		sortRows(rows)
+		m.applyLoadedRows(rows)
+		m.lastRefresh = time.Now()
+	case detailSnapshotMsg:
+		if msg.err != nil {
+			m.detail.Loading = false
+			m.detail.ErrText = msg.err.Error()
+			break
+		}
+		if msg.ok {
+			m.detail.ErrText = ""
+			m.detail.Data = msg.data
+			m.detail.LastRefresh = time.Now()
+		}
+		return m, m.refreshDetail()
 	case detailLoadedMsg:
 		m.detail.Loading = false
 		if msg.err != nil {
@@ -236,15 +284,38 @@ func (m model) View() string {
 
 func (m model) load() tea.Cmd {
 	return func() tea.Msg {
-		rows, err := LoadRows(m.ctx, m.app)
+		rows, err := LoadRowsSnapshot(m.ctx, m.app)
 		return loadedMsg{rows: rows, err: err}
+	}
+}
+
+func (m model) refreshFundQuotes() tea.Cmd {
+	positions := make([]Position, 0, len(m.rows))
+	for _, row := range m.rows {
+		positions = append(positions, row.Position)
+	}
+	return func() tea.Msg {
+		rows, errs := RefreshFundQuotes(m.ctx, m.app, positions)
+		quotes := make(map[string]valuation.Quote, len(rows))
+		for _, row := range rows {
+			quotes[row.Code] = row.Quote
+		}
+		return fundQuotesLoadedMsg{quotes: quotes, errs: errs}
 	}
 }
 
 func (m model) loadDetail() tea.Cmd {
 	fund := m.detail.Fund
 	return func() tea.Msg {
-		data, err := LoadDetail(m.ctx, m.app, fund)
+		data, ok, err := LoadDetailSnapshot(m.app, fund)
+		return detailSnapshotMsg{data: data, ok: ok, err: err}
+	}
+}
+
+func (m model) refreshDetail() tea.Cmd {
+	fund := m.detail.Fund
+	return func() tea.Msg {
+		data, err := RefreshDetail(m.ctx, m.app, fund)
 		return detailLoadedMsg{data: data, err: err}
 	}
 }
@@ -297,17 +368,70 @@ func tick() tea.Cmd {
 	})
 }
 
-func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
-	data, err := a.RealData(ctx)
+type fundQuoteFetcher interface {
+	FetchQuote(context.Context, string) (valuation.Quote, error)
+}
+
+type stockQuoteFetcher interface {
+	FetchTencentStockQuotes(context.Context, []string) (map[string]valuation.StockQuote, error)
+}
+
+var (
+	newFundQuoteFetcher = func() fundQuoteFetcher {
+		return valuation.NewClient()
+	}
+	newStockQuoteFetcher = func() stockQuoteFetcher {
+		return valuation.NewClient()
+	}
+)
+
+func LoadRowsSnapshot(ctx context.Context, a *fundapp.App) ([]Row, error) {
+	data, ok, err := a.CachedRealData()
 	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		data, err = a.RealData(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	positions := BuildPositions(data)
 	if len(positions) == 0 {
 		return nil, nil
 	}
+	quotes := make(map[string]valuation.Quote, len(positions))
+	errs := make(map[string]error, len(positions))
+	for _, pos := range positions {
+		quote, ok, err := a.CachedFundQuote(pos.Code)
+		if err != nil {
+			errs[pos.Code] = err
+			continue
+		}
+		if ok {
+			quotes[pos.Code] = quote
+		}
+	}
+	rows := BuildRows(positions, quotes, errs)
+	sortRows(rows)
+	return rows, nil
+}
 
-	client := valuation.NewClient()
+func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
+	rows, err := LoadRowsSnapshot(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	positions := make([]Position, 0, len(rows))
+	for _, row := range rows {
+		positions = append(positions, row.Position)
+	}
+	refreshed, _ := RefreshFundQuotes(ctx, a, positions)
+	return refreshed, nil
+}
+
+func RefreshFundQuotes(ctx context.Context, a *fundapp.App, positions []Position) ([]Row, map[string]error) {
+	client := newFundQuoteFetcher()
 	quotes := make(map[string]valuation.Quote, len(positions))
 	errs := make(map[string]error, len(positions))
 	var mu sync.Mutex
@@ -335,6 +459,7 @@ func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
 			}
 			if q.Code != "" {
 				quotes[pos.Code] = q
+				_ = a.SetFundQuote(pos.Code, q)
 			}
 			mu.Unlock()
 		}()
@@ -343,11 +468,44 @@ func LoadRows(ctx context.Context, a *fundapp.App) ([]Row, error) {
 
 	rows := BuildRows(positions, quotes, errs)
 	sortRows(rows)
-	return rows, nil
+	return rows, errs
+}
+
+func LoadDetailSnapshot(a *fundapp.App, fund Position) (DetailData, bool, error) {
+	holdings, ok, err := a.CachedFundStockHoldings(fund.Code)
+	if err != nil || !ok {
+		return DetailData{}, ok, err
+	}
+	data := buildDetailData(holdings)
+	data.PartialQuoteErr = false
+	for i := range data.Rows {
+		tc := valuation.NormalizeTencentCode(data.Rows[i].Holding.Code)
+		if tc == "" {
+			data.Rows[i].QuoteErr = true
+			data.PartialQuoteErr = true
+			continue
+		}
+		quote, ok, err := a.CachedStockQuote(tc)
+		if err != nil {
+			return DetailData{}, false, err
+		}
+		if ok {
+			data.Rows[i].Quote = quote
+			data.Rows[i].QuoteErr = false
+		} else {
+			data.Rows[i].QuoteErr = true
+			data.PartialQuoteErr = true
+		}
+	}
+	return data, true, nil
 }
 
 func LoadDetail(ctx context.Context, a *fundapp.App, fund Position) (DetailData, error) {
-	client := valuation.NewClient()
+	return RefreshDetail(ctx, a, fund)
+}
+
+func RefreshDetail(ctx context.Context, a *fundapp.App, fund Position) (DetailData, error) {
+	client := newStockQuoteFetcher()
 	holdings, err := a.FundStockHoldings(ctx, fund.Code)
 	if err != nil {
 		return DetailData{}, err
@@ -375,10 +533,36 @@ func LoadDetail(ctx context.Context, a *fundapp.App, fund Position) (DetailData,
 		if quoteErr != nil || tc == "" || !ok || (!quote.HasChangePercent && !quote.HasPrice) {
 			row.QuoteErr = true
 			data.PartialQuoteErr = true
+		} else {
+			_ = a.SetStockQuote(tc, quote)
 		}
 		data.Rows = append(data.Rows, row)
 	}
 	return data, nil
+}
+
+func buildDetailData(holdings valuation.FundStockHoldings) DetailData {
+	data := DetailData{
+		ReportDate:        holdings.ReportDate,
+		IsRecent:          holdings.IsRecent,
+		HoldingsAvailable: len(holdings.Holdings) > 0,
+	}
+	for _, holding := range holdings.Holdings {
+		data.Rows = append(data.Rows, StockHoldingRow{Holding: holding, QuoteErr: true})
+	}
+	if len(data.Rows) > 0 {
+		data.PartialQuoteErr = true
+	}
+	return data
+}
+
+func firstErrText(errs map[string]error) string {
+	for code, err := range errs {
+		if err != nil {
+			return fmt.Sprintf("%s: %v", code, err)
+		}
+	}
+	return ""
 }
 
 func sortRows(rows []Row) {

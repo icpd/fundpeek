@@ -10,6 +10,7 @@ import (
 	"github.com/icpd/fundpeek/internal/credential"
 	"github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/real"
+	"github.com/icpd/fundpeek/internal/valuation"
 )
 
 type fakeRealClient struct {
@@ -150,6 +151,86 @@ func TestInvalidateFundStockHoldingsCache(t *testing.T) {
 	}
 	if got["report"] != "fresh" {
 		t.Fatalf("report = %v, want fresh", got["report"])
+	}
+}
+
+func TestQuoteCacheAccessors(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+
+	if err := a.SetFundQuote("000001", valuation.Quote{Code: "000001", GSZZL: 1.23, HasGSZZL: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotFund, ok, err := a.CachedFundQuote("000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || gotFund.GSZZL != 1.23 {
+		t.Fatalf("cached fund quote = %#v ok=%v, want stored quote", gotFund, ok)
+	}
+
+	if err := a.SetStockQuote("sh600519", valuation.StockQuote{Code: "sh600519", Price: 1800, HasPrice: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotStock, ok, err := a.CachedStockQuote("sh600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || gotStock.Price != 1800 {
+		t.Fatalf("cached stock quote = %#v ok=%v, want stored quote", gotStock, ok)
+	}
+}
+
+func TestCachedRealDataDoesNotRequireCredentials(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+	if err := a.cache.Set("real_data", map[string]any{"funds": []any{map[string]any{"code": "000001"}}}); err != nil {
+		t.Fatal(err)
+	}
+	a.store = nil
+
+	got, ok, err := a.CachedRealData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got["funds"].([]any)[0].(map[string]any)["code"] != "000001" {
+		t.Fatalf("cached real data = %#v ok=%v, want cached data", got, ok)
+	}
+}
+
+func TestInvalidateFundQuoteCache(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+	if err := a.SetFundQuote("000001", valuation.Quote{Code: "000001", GSZZL: 1.23, HasGSZZL: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.InvalidateFundQuote("000001")
+
+	_, ok, err := a.CachedFundQuote("000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("force refresh should invalidate fund quote cache")
+	}
+}
+
+func TestInvalidateStockQuoteCache(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+	if err := a.SetStockQuote("sh600519", valuation.StockQuote{Code: "sh600519", Price: 1800, HasPrice: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.InvalidateStockQuote("sh600519")
+
+	_, ok, err := a.CachedStockQuote("sh600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("force refresh should invalidate stock quote cache")
 	}
 }
 

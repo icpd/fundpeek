@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -286,6 +287,9 @@ func TestForceListRefreshInvalidatesRealDataCache(t *testing.T) {
 	if err := store.Set("real_data", map[string]any{"fund": "stale"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Set("fund_quote/000001", valuation.Quote{Code: "000001", GSZZL: 1, HasGSZZL: true}); err != nil {
+		t.Fatal(err)
+	}
 	m := model{
 		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
 		rows: []Row{{Position: Position{Code: "000001"}}},
@@ -302,6 +306,14 @@ func TestForceListRefreshInvalidatesRealDataCache(t *testing.T) {
 	if ok {
 		t.Fatalf("force refresh should invalidate real data cache: %#v", got)
 	}
+	var quote valuation.Quote
+	ok, err = store.GetFresh("fund_quote/000001", time.Hour, &quote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force refresh should invalidate fund quote cache: %#v", quote)
+	}
 }
 
 func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
@@ -310,11 +322,17 @@ func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
 	if err := store.Set("fund_holdings/000001", map[string]any{"report": "stale"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Set("stock_quote/s_sh600519", valuation.StockQuote{Code: "s_sh600519", Price: 1800, HasPrice: true}); err != nil {
+		t.Fatal(err)
+	}
 	m := model{
 		app:  fundapp.New(config.Config{CacheDir: dir}, nil),
 		page: pageDetail,
 		detail: detailState{
 			Fund: Position{Code: "000001"},
+			Data: DetailData{
+				Rows: []StockHoldingRow{{Holding: valuation.StockHolding{Code: "600519"}}},
+			},
 		},
 	}
 
@@ -328,6 +346,14 @@ func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("force detail refresh should invalidate fund holdings cache: %#v", got)
+	}
+	var quote valuation.StockQuote
+	ok, err = store.GetFresh("stock_quote/s_sh600519", time.Hour, &quote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force detail refresh should invalidate stock quote cache: %#v", quote)
 	}
 }
 
@@ -373,6 +399,157 @@ func TestLoadedRowsKeepsSelectionByCodeAfterSort(t *testing.T) {
 	}
 }
 
+func TestLoadedRowsSortsAfterQuoteRefreshAndKeepsSelection(t *testing.T) {
+	m := model{
+		cursor:       1,
+		selectedCode: "000001",
+		rows: []Row{
+			{Position: Position{Code: "000001"}},
+			{Position: Position{Code: "000002"}},
+		},
+		loading: true,
+	}
+
+	updated, _ := m.Update(fundQuotesLoadedMsg{
+		quotes: map[string]valuation.Quote{
+			"000001": {Code: "000001", GSZZL: 3, HasGSZZL: true},
+			"000002": {Code: "000002", GSZZL: 1, HasGSZZL: true},
+		},
+	})
+	m = updated.(model)
+
+	if m.loading {
+		t.Fatal("quote refresh should mark list loading false")
+	}
+	if got := []string{m.rows[0].Code, m.rows[1].Code}; got[0] != "000001" || got[1] != "000002" {
+		t.Fatalf("rows after quote refresh = %#v, want selected fund sorted first", got)
+	}
+	if m.cursor != 0 || m.selectedCode != "000001" {
+		t.Fatalf("selection after quote refresh = cursor %d code %q, want 0/000001", m.cursor, m.selectedCode)
+	}
+}
+
+func TestLoadRowsSnapshotUsesCachedQuoteWithoutWaitingForRefresh(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	store := fundcache.NewFileCache(dir, func() time.Time { return now })
+	if err := store.Set("real_data", testRealData()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("fund_quote/000001", valuation.Quote{Code: "000001", GSZZL: 2.5, HasGSZZL: true, GSZ: 1.025, HasGSZ: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := LoadRowsSnapshot(context.Background(), fundapp.New(config.Config{CacheDir: dir}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("len(rows) = %d, want 2: %#v", len(rows), rows)
+	}
+	if rows[0].Code != "000001" || !rows[0].Quote.HasGSZZL || rows[0].Quote.GSZZL != 2.5 {
+		t.Fatalf("cached quote row = %#v, want 000001 with cached GSZZL", rows[0])
+	}
+	if rows[1].Code != "000002" || rows[1].Quote.HasGSZZL {
+		t.Fatalf("missing quote row = %#v, want 000002 without quote", rows[1])
+	}
+}
+
+func TestRefreshFundQuotesStoresCache(t *testing.T) {
+	dir := t.TempDir()
+	oldFundQuoteFetcher := newFundQuoteFetcher
+	t.Cleanup(func() { newFundQuoteFetcher = oldFundQuoteFetcher })
+	newFundQuoteFetcher = func() fundQuoteFetcher {
+		return fundQuoteFetcherFunc(func(_ context.Context, code string) (valuation.Quote, error) {
+			return valuation.Quote{Code: code, GSZZL: 4.2, HasGSZZL: true}, nil
+		})
+	}
+
+	rows, errs := RefreshFundQuotes(context.Background(), fundapp.New(config.Config{CacheDir: dir}, nil), []Position{{Code: "000001", Share: 100}})
+
+	if len(errs) != 0 {
+		t.Fatalf("errs = %#v, want none", errs)
+	}
+	if len(rows) != 1 || rows[0].Code != "000001" || rows[0].Quote.GSZZL != 4.2 {
+		t.Fatalf("rows = %#v, want fetched quote", rows)
+	}
+	var cached valuation.Quote
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Now() })
+	ok, err := store.GetFresh("fund_quote/000001", time.Hour, &cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || cached.GSZZL != 4.2 {
+		t.Fatalf("cached quote = %#v ok=%v, want refreshed quote", cached, ok)
+	}
+}
+
+func TestLoadDetailSnapshotUsesStaleHoldingsAndStockQuoteCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("fund_holdings/000001", valuation.FundStockHoldings{
+		ReportDate: "2026-03-31",
+		IsRecent:   true,
+		Holdings:   []valuation.StockHolding{{Code: "600519", Name: "贵州茅台", Weight: 9.87, HasWeight: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("stock_quote/s_sh600519", valuation.StockQuote{Code: "s_sh600519", Price: 1800, HasPrice: true, ChangePercent: 1.5, HasChangePercent: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, ok, err := LoadDetailSnapshot(fundapp.New(config.Config{CacheDir: dir}, nil), Position{Code: "000001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected stale detail snapshot")
+	}
+	if len(data.Rows) != 1 || data.Rows[0].Holding.Code != "600519" || data.Rows[0].Quote.Price != 1800 {
+		t.Fatalf("detail snapshot = %#v, want cached holdings and quote", data)
+	}
+	if data.PartialQuoteErr || data.Rows[0].QuoteErr {
+		t.Fatalf("detail snapshot should not mark complete cached quote as partial failure: %#v", data)
+	}
+}
+
+func TestRefreshDetailStoresStockQuoteCache(t *testing.T) {
+	dir := t.TempDir()
+	oldStockQuoteFetcher := newStockQuoteFetcher
+	t.Cleanup(func() { newStockQuoteFetcher = oldStockQuoteFetcher })
+	newStockQuoteFetcher = func() stockQuoteFetcher {
+		return stockQuoteFetcherFunc(func(_ context.Context, codes []string) (map[string]valuation.StockQuote, error) {
+			return map[string]valuation.StockQuote{
+				"s_sh600519": {Code: "s_sh600519", Price: 1810, HasPrice: true},
+			}, nil
+		})
+	}
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("fund_holdings/000001", valuation.FundStockHoldings{
+		ReportDate: "2026-03-31",
+		IsRecent:   true,
+		Holdings:   []valuation.StockHolding{{Code: "600519", Name: "贵州茅台"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := RefreshDetail(context.Background(), fundapp.New(config.Config{CacheDir: dir}, nil), Position{Code: "000001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 1 || data.Rows[0].Quote.Price != 1810 {
+		t.Fatalf("refreshed detail = %#v, want fetched stock quote", data)
+	}
+	var cached valuation.StockQuote
+	ok, err := store.GetFresh("stock_quote/s_sh600519", time.Hour, &cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || cached.Price != 1810 {
+		t.Fatalf("cached stock quote = %#v ok=%v, want refreshed quote", cached, ok)
+	}
+}
+
 func TestEnterAndEscSwitchBetweenListAndDetail(t *testing.T) {
 	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
 
@@ -396,6 +573,33 @@ func TestEnterAndEscSwitchBetweenListAndDetail(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("esc should not create command: %#v", cmd)
 	}
+}
+
+func testRealData() map[string]any {
+	return map[string]any{
+		"funds": []any{
+			map[string]any{"code": "000001", "name": "华夏成长"},
+			map[string]any{"code": "000002", "name": "易方达测试"},
+		},
+		"groupHoldings": map[string]any{
+			"import_yangjibao_default": map[string]any{
+				"000001": map[string]any{"share": 100},
+				"000002": map[string]any{"share": 200},
+			},
+		},
+	}
+}
+
+type fundQuoteFetcherFunc func(context.Context, string) (valuation.Quote, error)
+
+func (f fundQuoteFetcherFunc) FetchQuote(ctx context.Context, code string) (valuation.Quote, error) {
+	return f(ctx, code)
+}
+
+type stockQuoteFetcherFunc func(context.Context, []string) (map[string]valuation.StockQuote, error)
+
+func (f stockQuoteFetcherFunc) FetchTencentStockQuotes(ctx context.Context, codes []string) (map[string]valuation.StockQuote, error) {
+	return f(ctx, codes)
 }
 
 func TestRenderDetailShowsHoldingsAndPartialQuoteFailure(t *testing.T) {

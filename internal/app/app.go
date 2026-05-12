@@ -294,10 +294,80 @@ func (a *App) RealData(ctx context.Context) (map[string]any, error) {
 	return real.CloneData(data)
 }
 
+func (a *App) CachedRealData() (map[string]any, bool, error) {
+	if a.cache == nil {
+		return nil, false, nil
+	}
+	var data map[string]any
+	if _, ok, err := a.cache.Get("real_data", &data); err != nil {
+		return nil, false, err
+	} else if ok {
+		cloned, err := real.CloneData(data)
+		if err != nil {
+			return nil, false, err
+		}
+		return cloned, true, nil
+	}
+	return nil, false, nil
+}
+
 func (a *App) FundStockHoldings(ctx context.Context, code string) (valuation.FundStockHoldings, error) {
 	client := valuation.NewClient()
 	cached := valuation.NewCachedClient(a.cache, client)
 	return cached.FetchFundStockHoldings(ctx, code)
+}
+
+func (a *App) CachedFundStockHoldings(code string) (valuation.FundStockHoldings, bool, error) {
+	if a.cache == nil {
+		return valuation.FundStockHoldings{}, false, nil
+	}
+	var holdings valuation.FundStockHoldings
+	if _, ok, err := a.cache.Get("fund_holdings/"+strings.TrimSpace(code), &holdings); err != nil {
+		return valuation.FundStockHoldings{}, false, err
+	} else if ok {
+		return holdings, true, nil
+	}
+	return valuation.FundStockHoldings{}, false, nil
+}
+
+func (a *App) CachedFundQuote(code string) (valuation.Quote, bool, error) {
+	if a.cache == nil {
+		return valuation.Quote{}, false, nil
+	}
+	var quote valuation.Quote
+	if _, ok, err := a.cache.Get("fund_quote/"+strings.TrimSpace(code), &quote); err != nil {
+		return valuation.Quote{}, false, err
+	} else if ok {
+		return quote, true, nil
+	}
+	return valuation.Quote{}, false, nil
+}
+
+func (a *App) SetFundQuote(code string, quote valuation.Quote) error {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.Set("fund_quote/"+strings.TrimSpace(code), quote)
+}
+
+func (a *App) CachedStockQuote(code string) (valuation.StockQuote, bool, error) {
+	if a.cache == nil {
+		return valuation.StockQuote{}, false, nil
+	}
+	var quote valuation.StockQuote
+	if _, ok, err := a.cache.Get("stock_quote/"+strings.TrimSpace(code), &quote); err != nil {
+		return valuation.StockQuote{}, false, err
+	} else if ok {
+		return quote, true, nil
+	}
+	return valuation.StockQuote{}, false, nil
+}
+
+func (a *App) SetStockQuote(code string, quote valuation.StockQuote) error {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.Set("stock_quote/"+strings.TrimSpace(code), quote)
 }
 
 func (a *App) Restore(ctx context.Context, path string) error {
@@ -391,6 +461,18 @@ func (a *App) InvalidateRealData() {
 func (a *App) InvalidateFundStockHoldings(code string) {
 	if a.cache != nil {
 		_ = a.cache.Invalidate("fund_holdings/" + strings.TrimSpace(code))
+	}
+}
+
+func (a *App) InvalidateFundQuote(code string) {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("fund_quote/" + strings.TrimSpace(code))
+	}
+}
+
+func (a *App) InvalidateStockQuote(code string) {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("stock_quote/" + strings.TrimSpace(code))
 	}
 }
 
