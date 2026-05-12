@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	fundapp "github.com/icpd/fundpeek/internal/app"
 	fundcache "github.com/icpd/fundpeek/internal/cache"
 	"github.com/icpd/fundpeek/internal/config"
@@ -167,6 +168,32 @@ func TestRenderTableSummaryAlignsWithFundNames(t *testing.T) {
 	}
 }
 
+func TestRenderTableHeaderAlignsWithRows(t *testing.T) {
+	out := renderTableWithCursor([]Row{
+		{Position: Position{Code: "000001", Name: "华夏成长"}},
+	}, 0, 98)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 5 {
+		t.Fatalf("rendered table should include header, separators, row, and summary:\n%s", out)
+	}
+
+	headerStart := strings.Index(lines[0], "基金名称/代码")
+	rowStart := strings.Index(lines[2], "华夏成长")
+	summaryStart := strings.Index(lines[4], "汇总")
+	if headerStart != rowStart || rowStart != summaryStart {
+		t.Fatalf("column starts header=%d row=%d summary=%d:\n%s", headerStart, rowStart, summaryStart, out)
+	}
+
+	wantWidth := 2 + 58 + 12 + 14 + 12
+	if got := lipgloss.Width(lines[1]); got != wantWidth {
+		t.Fatalf("top separator width = %d, want %d: %q", got, wantWidth, lines[1])
+	}
+	if got := lipgloss.Width(lines[3]); got != wantWidth {
+		t.Fatalf("summary separator width = %d, want %d: %q", got, wantWidth, lines[3])
+	}
+}
+
 func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
 	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
 	out := renderTable([]Row{
@@ -181,6 +208,60 @@ func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
 	}
 	if !strings.Contains(out, "... #001938") {
 		t.Fatalf("rendered table should truncate long fund name before code:\n%s", out)
+	}
+}
+
+func TestRenderTableUsesDefaultFundNameWidthWithoutWindowWidth(t *testing.T) {
+	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
+	out := renderTableWithCursor([]Row{
+		{Position: Position{Code: "001938", Name: longName}},
+	}, -1, 0)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	wantWidth := 2 + 34 + 12 + 14 + 12
+	if got := lipgloss.Width(lines[1]); got != wantWidth {
+		t.Fatalf("separator width = %d, want %d: %q", got, wantWidth, lines[1])
+	}
+	if strings.Contains(out, longName) {
+		t.Fatalf("rendered table should keep default truncation without window width:\n%s", out)
+	}
+	if !strings.Contains(out, "... #001938") {
+		t.Fatalf("rendered table should truncate long fund name before code:\n%s", out)
+	}
+}
+
+func TestRenderTableKeepsDefaultFundNameWidthAtCurrentTableWidth(t *testing.T) {
+	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
+	out := renderTableWithCursor([]Row{
+		{Position: Position{Code: "001938", Name: longName}},
+	}, -1, 74)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	wantWidth := 2 + 34 + 12 + 14 + 12
+	if got := lipgloss.Width(lines[1]); got != wantWidth {
+		t.Fatalf("separator width = %d, want %d: %q", got, wantWidth, lines[1])
+	}
+	if strings.Contains(out, longName) {
+		t.Fatalf("rendered table should keep current truncation at width 74:\n%s", out)
+	}
+	if !strings.Contains(out, "... #001938") {
+		t.Fatalf("rendered table should truncate long fund name before code:\n%s", out)
+	}
+}
+
+func TestRenderTableExpandsFundNameWidthAtWideWindow(t *testing.T) {
+	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
+	out := renderTableWithCursor([]Row{
+		{Position: Position{Code: "001938", Name: longName}},
+	}, -1, 98)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	wantWidth := 2 + 58 + 12 + 14 + 12
+	if got := lipgloss.Width(lines[1]); got != wantWidth {
+		t.Fatalf("separator width = %d, want %d: %q", got, wantWidth, lines[1])
+	}
+	if !strings.Contains(out, longName+" #001938") {
+		t.Fatalf("rendered table should keep long fund name at width 98:\n%s", out)
 	}
 }
 

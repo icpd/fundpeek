@@ -277,7 +277,7 @@ func (m model) View() string {
 		return b.String()
 	}
 
-	b.WriteString(renderTableWithCursor(m.rows, m.cursor))
+	b.WriteString(renderTableWithCursor(m.rows, m.cursor, m.width))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -579,25 +579,28 @@ func sortRows(rows []Row) {
 }
 
 func renderTable(rows []Row) string {
-	return renderTableWithCursor(rows, -1)
+	return renderTableWithCursor(rows, -1, 0)
 }
 
-func renderTableWithCursor(rows []Row, cursor int) string {
+func renderTableWithCursor(rows []Row, cursor int, width int) string {
 	const (
-		fundWidth   = 34
-		estWidth    = 12
-		profitWidth = 14
-		latestWidth = 12
+		selectorWidth = 2
+		estWidth      = 12
+		profitWidth   = 14
+		latestWidth   = 12
 	)
+	fundWidth := fundListNameWidth(width)
+	tableWidth := selectorWidth + fundWidth + estWidth + profitWidth + latestWidth
 	var b strings.Builder
 	b.WriteString(tuiHeaderStyle.Render(
-		cell("基金名称/代码", fundWidth, lipgloss.Left) +
+		strings.Repeat(" ", selectorWidth) +
+			cell("基金名称/代码", fundWidth, lipgloss.Left) +
 			cell("估值涨幅↓", estWidth, lipgloss.Right) +
 			cell("当日收益", profitWidth, lipgloss.Right) +
 			cell("最新涨幅", latestWidth, lipgloss.Right),
 	))
 	b.WriteString("\n")
-	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", fundWidth+estWidth+profitWidth+latestWidth)))
+	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", tableWidth)))
 	b.WriteString("\n")
 	for i, row := range rows {
 		prefix := "  "
@@ -605,7 +608,7 @@ func renderTableWithCursor(rows []Row, cursor int) string {
 			prefix = "> "
 		}
 		b.WriteString(prefix)
-		b.WriteString(cell(fundLabel(row), fundWidth, lipgloss.Left))
+		b.WriteString(cell(fundLabel(row, fundWidth), fundWidth, lipgloss.Left))
 		b.WriteString(cell(formatPercent(row.Quote.GSZZL, row.Quote.HasGSZZL), estWidth, lipgloss.Right))
 		b.WriteString(cell(formatMoney(row.TodayProfit, row.HasProfit), profitWidth, lipgloss.Right))
 		b.WriteString(cell(formatPercent(row.Quote.ZZL, row.Quote.HasZZL), latestWidth, lipgloss.Right))
@@ -616,7 +619,7 @@ func renderTableWithCursor(rows []Row, cursor int) string {
 		b.WriteString("\n")
 	}
 	total := summarizeRows(rows)
-	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", fundWidth+estWidth+profitWidth+latestWidth)))
+	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", tableWidth)))
 	b.WriteString("\n")
 	b.WriteString("  ")
 	b.WriteString(cell("汇总", fundWidth, lipgloss.Left))
@@ -625,6 +628,22 @@ func renderTableWithCursor(rows []Row, cursor int) string {
 	b.WriteString(cell("", latestWidth, lipgloss.Right))
 	b.WriteString("\n")
 	return b.String()
+}
+
+func fundListNameWidth(windowWidth int) int {
+	const (
+		minFundWidth      = 34
+		maxFundWidth      = 58
+		defaultTableWidth = 74
+	)
+	if windowWidth <= defaultTableWidth {
+		return minFundWidth
+	}
+	fundWidth := minFundWidth + windowWidth - defaultTableWidth
+	if fundWidth > maxFundWidth {
+		return maxFundWidth
+	}
+	return fundWidth
 }
 
 func renderDetail(state detailState) string {
@@ -727,7 +746,7 @@ func cell(text string, width int, align lipgloss.Position) string {
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).Align(align).Render(text)
 }
 
-func fundLabel(row Row) string {
+func fundLabel(row Row, width int) string {
 	name := row.Name
 	if strings.TrimSpace(name) == "" {
 		name = row.Quote.Name
@@ -736,7 +755,7 @@ func fundLabel(row Row) string {
 		name = "未知基金"
 	}
 	suffix := fmt.Sprintf(" #%s", row.Code)
-	nameWidth := 34 - lipgloss.Width(suffix)
+	nameWidth := width - lipgloss.Width(suffix)
 	if nameWidth < 1 {
 		return suffix
 	}
