@@ -342,10 +342,13 @@ func TestListStatusBarShowsSpinnerRefreshState(t *testing.T) {
 func TestListViewKeepsRefreshHelpCompact(t *testing.T) {
 	out := model{}.View()
 
+	if !strings.Contains(out, "Enter detail") {
+		t.Fatalf("list help should show enter detail:\n%s", out)
+	}
 	if !strings.Contains(out, "r refresh") {
 		t.Fatalf("list help should show refresh:\n%s", out)
 	}
-	if strings.Contains(out, "quit") {
+	if strings.Contains(out, "q quit") {
 		t.Fatalf("list help should not show quit:\n%s", out)
 	}
 	if strings.Contains(out, "R force reload") {
@@ -393,9 +396,23 @@ func TestDetailStatusBarUsesUpdatedStateBeforeReportDate(t *testing.T) {
 
 	loadingLine := strings.Split(loading, "\n")[1]
 	idleLine := strings.Split(idle, "\n")[1]
-	help := "← back"
+	help := "Esc back"
 	if strings.Index(loadingLine, help) != strings.Index(idleLine, help) {
 		t.Fatalf("detail help start should stay stable:\nloading %q\nidle    %q", loadingLine, idleLine)
+	}
+}
+
+func TestDetailViewKeepsRefreshHelpCompact(t *testing.T) {
+	out := renderDetail(detailState{Fund: Position{Code: "000001", Name: "华夏成长"}})
+
+	if !strings.Contains(out, "Esc back") {
+		t.Fatalf("detail help should show esc back:\n%s", out)
+	}
+	if !strings.Contains(out, "r refresh") {
+		t.Fatalf("detail help should show refresh:\n%s", out)
+	}
+	if strings.Contains(out, "q quit") {
+		t.Fatalf("detail help should not show quit:\n%s", out)
 	}
 }
 
@@ -450,10 +467,10 @@ func TestManualDetailRefreshKeepsFundHoldingsCache(t *testing.T) {
 	}
 }
 
-func TestForceListRefreshInvalidatesRealDataCache(t *testing.T) {
+func TestForceListRefreshKeepsPortfolioDataCache(t *testing.T) {
 	dir := t.TempDir()
 	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
-	if err := store.Set("real_data", map[string]any{"fund": "stale"}); err != nil {
+	if err := store.Set("portfolio_data", map[string]any{"fund": "stale"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Set("fund_quote/000001", valuation.Quote{Code: "000001", GSZZL: 1, HasGSZZL: true}); err != nil {
@@ -468,12 +485,12 @@ func TestForceListRefreshInvalidatesRealDataCache(t *testing.T) {
 	_ = updated.(model)
 
 	var got map[string]any
-	ok, err := store.GetFresh("real_data", time.Hour, &got)
+	ok, err := store.GetFresh("portfolio_data", time.Hour, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Fatalf("force refresh should invalidate real data cache: %#v", got)
+	if !ok {
+		t.Fatal("force refresh should keep portfolio data cache")
 	}
 	var quote valuation.Quote
 	ok, err = store.GetFresh("fund_quote/000001", time.Hour, &quote)
@@ -598,11 +615,30 @@ func TestLoadedRowsSortsAfterQuoteRefreshAndKeepsSelection(t *testing.T) {
 	}
 }
 
+func TestQuoteRefreshPreservesPortfolioWarning(t *testing.T) {
+	m := model{
+		rows:    []Row{{Position: Position{Code: "000001"}}},
+		errText: "xiaobei unavailable",
+		loading: true,
+	}
+
+	updated, _ := m.Update(fundQuotesLoadedMsg{
+		quotes: map[string]valuation.Quote{
+			"000001": {Code: "000001", GSZZL: 3, HasGSZZL: true},
+		},
+	})
+	m = updated.(model)
+
+	if m.errText != "xiaobei unavailable" {
+		t.Fatalf("errText after quote refresh = %q, want portfolio warning", m.errText)
+	}
+}
+
 func TestLoadRowsSnapshotUsesCachedQuoteWithoutWaitingForRefresh(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	store := fundcache.NewFileCache(dir, func() time.Time { return now })
-	if err := store.Set("real_data", testRealData()); err != nil {
+	if err := store.Set("portfolio_data", testRealData()); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Set("fund_quote/000001", valuation.Quote{Code: "000001", GSZZL: 2.5, HasGSZZL: true, GSZ: 1.025, HasGSZ: true}); err != nil {
@@ -757,37 +793,75 @@ func TestLeftOnListQuits(t *testing.T) {
 	}
 }
 
-func TestEnterEscAndQDoNotSwitchOrQuit(t *testing.T) {
+func TestEnterOnListOpensDetail(t *testing.T) {
 	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
-	if m.page != pageList {
-		t.Fatalf("page after enter = %v, want list", m.page)
+	if m.page != pageDetail {
+		t.Fatalf("page after enter = %v, want detail", m.page)
 	}
-	if cmd != nil {
-		t.Fatalf("enter should not create command: %#v", cmd)
+	if m.detail.Fund.Code != "000001" {
+		t.Fatalf("detail fund = %#v, want code 000001", m.detail.Fund)
+	}
+	if cmd == nil {
+		t.Fatal("expected detail load command")
+	}
+}
+
+func TestEscOnDetailReturnsToList(t *testing.T) {
+	m := model{
+		page:   pageDetail,
+		detail: detailState{Fund: Position{Code: "000001", Name: "华夏成长"}},
 	}
 
-	m.page = pageDetail
-	m.detail = detailState{Fund: Position{Code: "000001", Name: "华夏成长"}}
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
-	if m.page != pageDetail {
-		t.Fatalf("page after esc = %v, want detail", m.page)
+	if m.page != pageList {
+		t.Fatalf("page after esc = %v, want list", m.page)
 	}
 	if cmd != nil {
 		t.Fatalf("esc should not create command: %#v", cmd)
 	}
+}
 
-	m.page = pageList
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+func TestEscOnListQuits(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
 	if m.page != pageList {
-		t.Fatalf("page after q = %v, want list", m.page)
+		t.Fatalf("page after esc on list = %v, want list", m.page)
 	}
-	if cmd != nil {
-		t.Fatalf("q should not create command: %#v", cmd)
+	if cmd == nil {
+		t.Fatal("esc on list should quit")
+	}
+}
+
+func TestQQuitsFromListAndDetail(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		page page
+	}{
+		{name: "list", page: pageList},
+		{name: "detail", page: pageDetail},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model{
+				page:   tt.page,
+				rows:   []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}},
+				detail: detailState{Fund: Position{Code: "000001", Name: "华夏成长"}},
+			}
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+			m = updated.(model)
+			if m.page != tt.page {
+				t.Fatalf("page after q = %v, want %v", m.page, tt.page)
+			}
+			if cmd == nil {
+				t.Fatal("q should quit")
+			}
+		})
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icpd/fundpeek/internal/backup"
 	fundcache "github.com/icpd/fundpeek/internal/cache"
 	"github.com/icpd/fundpeek/internal/config"
 	"github.com/icpd/fundpeek/internal/console"
@@ -36,15 +35,36 @@ type App struct {
 	store *credential.FileStore
 	real  realClient
 	cache *fundcache.FileCache
+
+	fetchYangJiBaoInput func(context.Context) (model.SyncInput, error)
+	fetchXiaoBeiInput   func(context.Context) (model.SyncInput, error)
+}
+
+type PartialSyncError struct {
+	Err error
+}
+
+func (e PartialSyncError) Error() string {
+	if e.Err == nil {
+		return ""
+	}
+	return e.Err.Error()
+}
+
+func (e PartialSyncError) Unwrap() error {
+	return e.Err
 }
 
 func New(cfg config.Config, store *credential.FileStore) *App {
-	return &App{
+	a := &App{
 		cfg:   cfg,
 		store: store,
 		real:  real.NewClient(cfg.SupabaseURL, cfg.SupabaseAnon, cfg.DeviceID),
 		cache: fundcache.NewFileCache(cfg.CacheDir, time.Now),
 	}
+	a.fetchYangJiBaoInput = a.fetchYangJiBao
+	a.fetchXiaoBeiInput = a.fetchXiaoBei
+	return a
 }
 
 func (a *App) AuthRealStart(ctx context.Context, email string) error {
@@ -220,48 +240,45 @@ func (a *App) Status(ctx context.Context) error {
 }
 
 func (a *App) Sync(ctx context.Context, source string) error {
+	if source == "" {
+		source = "all"
+	}
 	switch source {
 	case model.SourceYangJiBao:
-		input, err := a.fetchYangJiBao(ctx)
+		input, err := a.fetchYangJiBaoInput(ctx)
 		if err != nil {
 			return err
 		}
-		return a.applySync(ctx, []model.SyncInput{input})
+		return a.applyLocalSync([]model.SyncInput{input}, nil)
 	case model.SourceXiaoBei:
-		input, err := a.fetchXiaoBei(ctx)
+		input, err := a.fetchXiaoBeiInput(ctx)
 		if err != nil {
 			return err
 		}
-		return a.applySync(ctx, []model.SyncInput{input})
+		return a.applyLocalSync([]model.SyncInput{input}, nil)
 	case "all":
-		yjb, err := a.fetchYangJiBao(ctx)
-		if err != nil {
-			return err
+		var inputs []model.SyncInput
+		var errs []error
+		if yjb, err := a.fetchYangJiBaoInput(ctx); err != nil {
+			errs = append(errs, err)
+		} else {
+			inputs = append(inputs, yjb)
 		}
-		xb, err := a.fetchXiaoBei(ctx)
-		if err != nil {
-			return err
+		if xb, err := a.fetchXiaoBeiInput(ctx); err != nil {
+			errs = append(errs, err)
+		} else {
+			inputs = append(inputs, xb)
 		}
-		return a.applySync(ctx, []model.SyncInput{yjb, xb})
+		err := a.applyLocalSync(inputs, errs)
+		var partial PartialSyncError
+		if errors.As(err, &partial) {
+			fmt.Println("warning:", partial.Error())
+			return nil
+		}
+		return err
 	default:
 		return fmt.Errorf("unknown sync source %q", source)
 	}
-}
-
-func (a *App) Backup(ctx context.Context) (string, error) {
-	cred, err := a.realCred(ctx)
-	if err != nil {
-		return "", err
-	}
-	cfg, err := a.real.FetchUserConfig(ctx, cred)
-	if err != nil {
-		return "", err
-	}
-	data, err := real.CloneData(cfg.Data)
-	if err != nil {
-		return "", err
-	}
-	return backup.Save(a.cfg.BackupDir, cred.UserID, data)
 }
 
 func (a *App) RealData(ctx context.Context) (map[string]any, error) {
@@ -300,6 +317,32 @@ func (a *App) CachedRealData() (map[string]any, bool, error) {
 	}
 	var data map[string]any
 	if _, ok, err := a.cache.Get("real_data", &data); err != nil {
+		return nil, false, err
+	} else if ok {
+		cloned, err := real.CloneData(data)
+		if err != nil {
+			return nil, false, err
+		}
+		return cloned, true, nil
+	}
+	return nil, false, nil
+}
+
+func (a *App) PortfolioData(ctx context.Context) (map[string]any, error) {
+	if data, ok, err := a.CachedPortfolioData(); err != nil {
+		return nil, err
+	} else if ok {
+		return data, nil
+	}
+	return nil, fmt.Errorf("no local portfolio data; run fundpeek sync")
+}
+
+func (a *App) CachedPortfolioData() (map[string]any, bool, error) {
+	if a.cache == nil {
+		return nil, false, nil
+	}
+	var data map[string]any
+	if _, ok, err := a.cache.Get("portfolio_data", &data); err != nil {
 		return nil, false, err
 	} else if ok {
 		cloned, err := real.CloneData(data)
@@ -370,35 +413,31 @@ func (a *App) SetStockQuote(code string, quote valuation.StockQuote) error {
 	return a.cache.Set("stock_quote/"+strings.TrimSpace(code), quote)
 }
 
-func (a *App) Restore(ctx context.Context, path string) error {
+func (a *App) PushReal(ctx context.Context) error {
 	cred, err := a.realCred(ctx)
 	if err != nil {
 		return err
+	}
+	data, err := a.PortfolioData(ctx)
+	if err != nil {
+		return err
+	}
+	if !hasImportedHoldings(data) {
+		return fmt.Errorf("no local portfolio data; run fundpeek sync")
 	}
 	current, err := a.real.FetchUserConfig(ctx, cred)
 	if err != nil {
 		return err
 	}
-	currentData, err := real.CloneData(current.Data)
+	merged, err := mergePortfolioIntoRemote(current.Data, data)
 	if err != nil {
 		return err
 	}
-	backupPath, err := backup.Save(a.cfg.BackupDir, cred.UserID, currentData)
-	if err != nil {
+	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, merged); err != nil {
 		return err
 	}
-	snapshot, err := backup.Load(path)
-	if err != nil {
-		return err
-	}
-	if snapshot.UserID != cred.UserID {
-		return fmt.Errorf("backup belongs to user %s, current user is %s", snapshot.UserID, cred.UserID)
-	}
-	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, snapshot.Data); err != nil {
-		return fmt.Errorf("%w; restore pre-backup saved at %s", err, backupPath)
-	}
-	a.setRealDataCache(snapshot.Data)
-	fmt.Println("restore pre-backup:", backupPath)
+	a.setRealDataCache(merged)
+	fmt.Println("real push: ok")
 	return nil
 }
 
@@ -412,24 +451,36 @@ func (a *App) Logout(source string) error {
 	return nil
 }
 
-func (a *App) applySync(ctx context.Context, inputs []model.SyncInput) error {
-	cred, err := a.realCred(ctx)
-	if err != nil {
-		return err
+func (a *App) RefreshPortfolio(ctx context.Context) error {
+	var inputs []model.SyncInput
+	var errs []error
+	if yjb, err := a.fetchYangJiBaoInput(ctx); err != nil {
+		errs = append(errs, err)
+	} else {
+		inputs = append(inputs, yjb)
 	}
-	current, err := a.real.FetchUserConfig(ctx, cred)
-	if err != nil {
-		return err
+	if xb, err := a.fetchXiaoBeiInput(ctx); err != nil {
+		errs = append(errs, err)
+	} else {
+		inputs = append(inputs, xb)
 	}
-	data, err := real.CloneData(current.Data)
-	if err != nil {
-		return err
-	}
-	backupPath, err := backup.Save(a.cfg.BackupDir, cred.UserID, data)
-	if err != nil {
-		return err
-	}
+	return a.applyLocalSync(inputs, errs)
+}
 
+func (a *App) applyLocalSync(inputs []model.SyncInput, errs []error) error {
+	if len(inputs) == 0 {
+		if len(errs) > 0 {
+			return joinErrors(errs)
+		}
+		return fmt.Errorf("no source data synced")
+	}
+	data, _, err := a.CachedPortfolioData()
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
 	for _, input := range inputs {
 		report, err := merge.Apply(data, input)
 		if err != nil {
@@ -437,18 +488,32 @@ func (a *App) applySync(ctx context.Context, inputs []model.SyncInput) error {
 		}
 		printReport(report)
 	}
-	if err := a.real.UpdateUserConfigIfUnchanged(ctx, cred, current, data); err != nil {
-		return fmt.Errorf("%w; backup saved at %s", err, backupPath)
+	if err := a.setPortfolioDataCache(data); err != nil {
+		return err
 	}
-	a.setRealDataCache(data)
-	fmt.Println("backup:", backupPath)
-	fmt.Println("real upsert: ok")
+	fmt.Println("portfolio sync: ok")
+	if len(errs) > 0 {
+		return PartialSyncError{Err: joinErrors(errs)}
+	}
 	return nil
 }
 
 func (a *App) setRealDataCache(data map[string]any) {
 	if a.cache != nil {
 		_ = a.cache.Set("real_data", data)
+	}
+}
+
+func (a *App) setPortfolioDataCache(data map[string]any) error {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.Set("portfolio_data", data)
+}
+
+func (a *App) InvalidatePortfolioData() {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("portfolio_data")
 	}
 }
 
@@ -597,6 +662,122 @@ func printCredentialStatus(name string, read func() error) {
 		return
 	}
 	fmt.Printf("%s: authenticated\n", name)
+}
+
+func hasImportedHoldings(data map[string]any) bool {
+	for key, value := range toMap(data["groupHoldings"]) {
+		if !strings.HasPrefix(key, "import_"+model.SourceYangJiBao+"_") && !strings.HasPrefix(key, "import_"+model.SourceXiaoBei+"_") {
+			continue
+		}
+		if len(toMap(value)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func mergePortfolioIntoRemote(remote, local map[string]any) (map[string]any, error) {
+	out, err := real.CloneData(remote)
+	if err != nil {
+		return nil, err
+	}
+	localClone, err := real.CloneData(local)
+	if err != nil {
+		return nil, err
+	}
+	out["funds"] = mergePortfolioFunds(out["funds"], localClone["funds"])
+	out["groups"] = replaceImportedGroups(out["groups"], localClone["groups"])
+	out["groupHoldings"] = replaceImportedGroupHoldings(out["groupHoldings"], localClone["groupHoldings"])
+	return out, nil
+}
+
+func mergePortfolioFunds(remote, local any) []any {
+	out := toSlice(remote)
+	seen := map[string]bool{}
+	for _, item := range out {
+		code, _ := toMap(item)["code"].(string)
+		if code != "" {
+			seen[code] = true
+		}
+	}
+	for _, item := range toSlice(local) {
+		code, _ := toMap(item)["code"].(string)
+		if code == "" || seen[code] {
+			continue
+		}
+		out = append(out, item)
+		seen[code] = true
+	}
+	return out
+}
+
+func replaceImportedGroups(remote, local any) []any {
+	out := make([]any, 0)
+	for _, item := range toSlice(remote) {
+		id, _ := toMap(item)["id"].(string)
+		if !isFundpeekImportGroup(id) {
+			out = append(out, item)
+		}
+	}
+	for _, item := range toSlice(local) {
+		id, _ := toMap(item)["id"].(string)
+		if isFundpeekImportGroup(id) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func replaceImportedGroupHoldings(remote, local any) map[string]any {
+	out := toMap(remote)
+	for key := range out {
+		if isFundpeekImportGroup(key) {
+			delete(out, key)
+		}
+	}
+	for key, value := range toMap(local) {
+		if isFundpeekImportGroup(key) {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func isFundpeekImportGroup(id string) bool {
+	return strings.HasPrefix(id, "import_"+model.SourceYangJiBao+"_") || strings.HasPrefix(id, "import_"+model.SourceXiaoBei+"_")
+}
+
+func joinErrors(errs []error) error {
+	parts := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err != nil {
+			parts = append(parts, err.Error())
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(parts, "; "))
+}
+
+func toMap(value any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	if out, ok := value.(map[string]any); ok {
+		return out
+	}
+	return map[string]any{}
+}
+
+func toSlice(value any) []any {
+	if value == nil {
+		return []any{}
+	}
+	if out, ok := value.([]any); ok {
+		return out
+	}
+	return []any{}
 }
 
 func parseFloat(value string) float64 {

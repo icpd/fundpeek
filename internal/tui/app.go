@@ -36,8 +36,9 @@ type model struct {
 }
 
 type loadedMsg struct {
-	rows []Row
-	err  error
+	rows    []Row
+	err     error
+	warning string
 }
 
 type fundQuotesLoadedMsg struct {
@@ -124,15 +125,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c":
+		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "left":
-			if m.page == pageDetail {
-				m.page = pageList
-				return m, nil
-			}
-			return m, tea.Quit
-		case "backspace":
+		case "left", "backspace", "esc":
 			if m.page == pageDetail {
 				m.page = pageList
 				return m, nil
@@ -146,7 +141,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == pageList {
 				m.moveCursor(1)
 			}
-		case "right":
+		case "right", "enter":
 			if m.page == pageList && len(m.rows) > 0 {
 				m.openDetail(m.rows[m.cursor].Position)
 				return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
@@ -182,13 +177,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if !m.loading {
-				m.app.InvalidateRealData()
 				for _, row := range m.rows {
 					m.app.InvalidateFundQuote(row.Code)
 				}
 				m.loading = true
 				m.errText = ""
-				return m, tea.Batch(m.load(), m.spinnerTickCmd())
+				return m, tea.Batch(m.refreshPortfolio(), m.spinnerTickCmd())
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -215,16 +209,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = msg.err.Error()
 			break
 		}
-		m.errText = ""
+		m.errText = msg.warning
 		m.applyLoadedRows(msg.rows)
 		m.lastRefresh = time.Now()
 		return m, m.refreshFundQuotes()
 	case fundQuotesLoadedMsg:
 		m.loading = false
-		if len(msg.errs) > 0 {
-			m.errText = firstErrText(msg.errs)
-		} else {
-			m.errText = ""
+		if quoteErr := firstErrText(msg.errs); quoteErr != "" {
+			m.errText = joinStatusText(m.errText, quoteErr)
 		}
 		positions := make([]Position, 0, len(m.rows))
 		for _, row := range m.rows {
@@ -271,7 +263,7 @@ func (m model) View() string {
 		m.loading,
 		m.errText != "",
 		m.lastRefresh,
-		"↑/↓ select  → detail  r refresh",
+		"↑/↓ select  Enter detail  r refresh",
 		m.statusSpinner().View(),
 	)))
 	b.WriteString("\n\n")
@@ -298,6 +290,20 @@ func (m model) View() string {
 
 func (m model) load() tea.Cmd {
 	return func() tea.Msg {
+		rows, err := LoadRowsSnapshot(m.ctx, m.app)
+		return loadedMsg{rows: rows, err: err}
+	}
+}
+
+func (m model) refreshPortfolio() tea.Cmd {
+	return func() tea.Msg {
+		if err := m.app.RefreshPortfolio(m.ctx); err != nil {
+			rows, loadErr := LoadRowsSnapshot(m.ctx, m.app)
+			if loadErr != nil {
+				return loadedMsg{err: fmt.Errorf("%v; %w", err, loadErr)}
+			}
+			return loadedMsg{rows: rows, warning: err.Error()}
+		}
 		rows, err := LoadRowsSnapshot(m.ctx, m.app)
 		return loadedMsg{rows: rows, err: err}
 	}
@@ -418,15 +424,9 @@ var (
 )
 
 func LoadRowsSnapshot(ctx context.Context, a *fundapp.App) ([]Row, error) {
-	data, ok, err := a.CachedRealData()
+	data, err := a.PortfolioData(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if !ok {
-		data, err = a.RealData(ctx)
-		if err != nil {
-			return nil, err
-		}
 	}
 	positions := BuildPositions(data)
 	if len(positions) == 0 {
@@ -597,6 +597,18 @@ func firstErrText(errs map[string]error) string {
 	return ""
 }
 
+func joinStatusText(left, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" || left == right {
+		return left
+	}
+	return left + "; " + right
+}
+
 func sortRows(rows []Row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		left, right := rows[i], rows[j]
@@ -695,7 +707,7 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 	b.WriteString(tuiTitleStyle.Render(fundPositionLabel(state.Fund)))
 	b.WriteString("\n")
 
-	help := "← back  r refresh"
+	help := "Esc back  r refresh"
 	if state.Data.ReportDate != "" {
 		help = "report " + state.Data.ReportDate + "  " + help
 	}

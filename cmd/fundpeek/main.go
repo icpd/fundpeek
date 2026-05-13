@@ -81,32 +81,27 @@ func run() error {
 		}
 		return tui.Run(ctx, a)
 	case "sync":
-		if len(args) < 2 {
-			return errors.New("missing sync source: yjb/yj, xb/xbyj, all/a")
+		sourceArg := ""
+		if len(args) >= 2 {
+			sourceArg = args[1]
 		}
-		source, err := normalizeSyncSource(args[1])
+		source, err := normalizeSyncSource(sourceArg)
 		if err != nil {
 			return err
 		}
 		return a.Sync(ctx, source)
-	case "backup":
-		path, err := a.Backup(ctx)
+	case "push":
+		if len(args) < 2 {
+			return errors.New("missing push target: real/r")
+		}
+		target, err := normalizePushTarget(args[1])
 		if err != nil {
 			return err
 		}
-		fmt.Println(path)
-		return nil
-	case "restore":
-		if len(args) < 2 {
-			return errors.New("missing backup file")
+		if target == model.SourceReal {
+			return a.PushReal(ctx)
 		}
-		if !hasYesFlag(args[2:]) {
-			reader := bufio.NewReader(os.Stdin)
-			if !confirm(reader, "restore will overwrite real cloud config. Continue? [y/N]: ") {
-				return errors.New("restore cancelled")
-			}
-		}
-		return a.Restore(ctx, args[1])
+		return fmt.Errorf("unknown push target %q", args[1])
 	case "logout":
 		if len(args) < 2 {
 			return errors.New("missing logout source: real/r, yjb/yj, xb/xbyj")
@@ -132,7 +127,7 @@ func isHelpCommand(command string) bool {
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "auth", "status", "sync", "backup", "restore", "logout", "tui":
+	case "auth", "status", "sync", "push", "logout", "tui":
 		return true
 	default:
 		return false
@@ -153,6 +148,8 @@ func normalizeAuthSource(source string) (string, error) {
 
 func normalizeSyncSource(source string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "":
+		return "all", nil
 	case "yangjibao", "yjb", "yj":
 		return model.SourceYangJiBao, nil
 	case "xiaobei", "xb", "xbyj":
@@ -161,6 +158,14 @@ func normalizeSyncSource(source string) (string, error) {
 		return "all", nil
 	}
 	return "", fmt.Errorf("unknown sync source %q", source)
+}
+
+func normalizePushTarget(target string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "real", "r":
+		return model.SourceReal, nil
+	}
+	return "", fmt.Errorf("unknown push target %q", target)
 }
 
 func runAuth(ctx context.Context, a *app.App, source string) error {
@@ -197,22 +202,8 @@ func prompt(reader *bufio.Reader, label string) string {
 	return strings.TrimSpace(text)
 }
 
-func confirm(reader *bufio.Reader, label string) bool {
-	answer := strings.ToLower(prompt(reader, label))
-	return answer == "y" || answer == "yes"
-}
-
-func hasYesFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "--yes" || arg == "-y" {
-			return true
-		}
-	}
-	return false
-}
-
 func printUsage() {
-	fmt.Println(`fundpeek - 基金持仓同步、估值查看和备份恢复工具
+	fmt.Println(`fundpeek - 基金持仓 TUI 和可选估基宝同步工具
 
 Usage:
   fundpeek <command> [arguments]
@@ -221,9 +212,8 @@ Commands:
   auth <source>                 登录数据源，支持 real、yangjibao、xiaobei
   status                        查看各数据源登录状态
   tui                           打开基金估值和持仓 TUI
-  sync <source>                 同步基金持仓到 real，可选 yjb、xb、all
-  backup                        备份 real 云端配置，输出备份文件路径
-  restore <backup-file> [--yes] 从备份文件恢复 real 云端配置
+  sync [source]                 刷新本地 TUI 持仓数据，可选 yjb、xb、all，默认 all
+  push real                     将本地持仓数据同步到估基宝
   logout <source>               退出指定数据源登录
   help                          显示帮助信息
 
@@ -235,8 +225,7 @@ Sources:
 
 Examples:
   fundpeek auth yjb
-  fundpeek sync all
+  fundpeek sync
   fundpeek tui
-  fundpeek backup
-  fundpeek restore ./backup.json --yes`)
+  fundpeek push real`)
 }

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`fundpeek` is a Go CLI/TUI module (`github.com/icpd/fundpeek`). The command entrypoint lives in `cmd/fundpeek/main.go`. Internal packages are under `internal/`: `app` coordinates workflows, `config` and `credential` handle local setup, `backup` writes restore points, `cache` stores local JSON cache entries, `real` talks to the 基估宝 Supabase backend, `sources/*` contains upstream fund-source clients, `valuation` fetches fund quotes, stock holdings, and stock quotes, `merge` combines records, and `tui`/`authui` provide terminal interfaces. Tests are colocated with implementation files as `*_test.go`. The build output is `./fundpeek`; local caches such as `.gocache/` are ignored.
+`fundpeek` is a Go CLI/TUI module (`github.com/icpd/fundpeek`). The command entrypoint lives in `cmd/fundpeek/main.go`. Internal packages are under `internal/`: `app` coordinates workflows, `config` and `credential` handle local setup, `cache` stores local JSON cache entries, `real` talks to the 基估宝 Supabase backend, `sources/*` contains upstream fund-source clients, `valuation` fetches fund quotes, stock holdings, and stock quotes, `merge` combines records, and `tui`/`authui` provide terminal interfaces. Tests are colocated with implementation files as `*_test.go`. The build output is `./fundpeek`; local caches such as `.gocache/` are ignored.
 
 ## Build, Test, and Development Commands
 
@@ -12,7 +12,7 @@
 - `make verify`: runs test, vet, and build; use this before submitting changes.
 - `go run ./cmd/fundpeek --help`: prints CLI usage without creating a binary.
 
-Common runtime commands include `./fundpeek status`, `./fundpeek tui`, `./fundpeek sync all`, and `./fundpeek auth real|yjb|xb`. Source aliases are accepted by command parsing: `real/r`, `yangjibao/yjb/yj`, `xiaobei/xb/xbyj`, and `all/a` for sync.
+Common runtime commands include `./fundpeek status`, `./fundpeek tui`, `./fundpeek sync`, `./fundpeek push real`, and `./fundpeek auth real|yjb|xb`. Source aliases are accepted by command parsing: `real/r`, `yangjibao/yjb/yj`, `xiaobei/xb/xbyj`, and `all/a` for sync.
 
 ## Coding Style & Naming Conventions
 
@@ -28,4 +28,4 @@ Recent history uses short, imperative commit subjects such as `Add fund valuatio
 
 ## Security & Configuration Tips
 
-Do not commit credentials, tokens, backups, cache files, or generated local state. Auth flows may read email, phone, OTP, or SMS codes; keep those in local prompts only. Treat source-client and valuation-client changes as network-facing: use timeouts, return clear errors, and avoid printing sensitive response data.
+Do not commit credentials, tokens, cache files, or generated local state. Auth flows may read email, phone, OTP, or SMS codes; keep those in local prompts only. Treat source-client and valuation-client changes as network-facing: use timeouts, return clear errors, and avoid printing sensitive response data.

@@ -73,6 +73,16 @@ func TestNormalizeSyncSourceRejectsReal(t *testing.T) {
 	}
 }
 
+func TestNormalizeSyncSourceDefaultsToAll(t *testing.T) {
+	got, err := normalizeSyncSource("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "all" {
+		t.Fatalf("normalizeSyncSource(\"\") = %q, want all", got)
+	}
+}
+
 func TestHelpDoesNotCreateConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
@@ -95,22 +105,45 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 	out := captureStdout(t, printUsage)
 
 	for _, want := range []string{
-		"fundpeek - 基金持仓同步、估值查看和备份恢复工具",
+		"fundpeek - 基金持仓 TUI 和可选估基宝同步工具",
 		"Commands:",
 		"auth <source>",
 		"登录数据源",
 		"tui",
 		"打开基金估值和持仓 TUI",
+		"push real",
 		"Sources:",
 		"real",
 		"yangjibao",
 		"Examples:",
-		"fundpeek sync all",
-		"fundpeek restore ./backup.json --yes",
+		"fundpeek sync",
+		"fundpeek push real",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help missing %q:\n%s", want, out)
 		}
+	}
+	for _, unwanted := range []string{"backup", "restore"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("help should not mention %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestBackupAndRestoreAreUnknownCommands(t *testing.T) {
+	for _, command := range []string{"backup", "restore"} {
+		t.Run(command, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
+			oldArgs := os.Args
+			t.Cleanup(func() { os.Args = oldArgs })
+
+			os.Args = []string{"fundpeek", command}
+			err := run()
+			if err == nil || !strings.Contains(err.Error(), "unknown command") {
+				t.Fatalf("run(%q) err = %v, want unknown command", command, err)
+			}
+		})
 	}
 }
 
