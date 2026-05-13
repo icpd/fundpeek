@@ -288,7 +288,7 @@ func TestListLoadingViewUsesConciseCopy(t *testing.T) {
 
 func TestStatusBarKeepsHelpStartStableAcrossStates(t *testing.T) {
 	lastRefresh := time.Date(2026, 5, 12, 15, 4, 5, 0, time.Local)
-	help := "↑/↓ select  enter detail  r refresh  q quit"
+	help := "↑/↓ select  → detail  r refresh"
 	loading := renderStatusBar(true, false, lastRefresh, help, "⠋")
 	idle := renderStatusBar(false, false, lastRefresh, help, "⠋")
 	err := renderStatusBar(false, true, lastRefresh, help, "⠋")
@@ -345,6 +345,9 @@ func TestListViewKeepsRefreshHelpCompact(t *testing.T) {
 	if !strings.Contains(out, "r refresh") {
 		t.Fatalf("list help should show refresh:\n%s", out)
 	}
+	if strings.Contains(out, "quit") {
+		t.Fatalf("list help should not show quit:\n%s", out)
+	}
 	if strings.Contains(out, "R force reload") {
 		t.Fatalf("list help should not show separate force reload:\n%s", out)
 	}
@@ -390,7 +393,7 @@ func TestDetailStatusBarUsesUpdatedStateBeforeReportDate(t *testing.T) {
 
 	loadingLine := strings.Split(loading, "\n")[1]
 	idleLine := strings.Split(idle, "\n")[1]
-	help := "esc back"
+	help := "← back"
 	if strings.Index(loadingLine, help) != strings.Index(idleLine, help) {
 		t.Fatalf("detail help start should stay stable:\nloading %q\nidle    %q", loadingLine, idleLine)
 	}
@@ -716,13 +719,13 @@ func TestRefreshDetailStoresStockQuoteCache(t *testing.T) {
 	}
 }
 
-func TestEnterAndEscSwitchBetweenListAndDetail(t *testing.T) {
+func TestArrowKeysSwitchBetweenListAndDetail(t *testing.T) {
 	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(model)
 	if m.page != pageDetail {
-		t.Fatalf("page after enter = %v, want detail", m.page)
+		t.Fatalf("page after right = %v, want detail", m.page)
 	}
 	if m.detail.Fund.Code != "000001" {
 		t.Fatalf("detail fund = %#v, want code 000001", m.detail.Fund)
@@ -731,13 +734,73 @@ func TestEnterAndEscSwitchBetweenListAndDetail(t *testing.T) {
 		t.Fatal("expected detail load command")
 	}
 
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = updated.(model)
 	if m.page != pageList {
-		t.Fatalf("page after esc = %v, want list", m.page)
+		t.Fatalf("page after left = %v, want list", m.page)
+	}
+	if cmd != nil {
+		t.Fatalf("left should not create command: %#v", cmd)
+	}
+}
+
+func TestLeftOnListQuits(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	if m.page != pageList {
+		t.Fatalf("page after left on list = %v, want list", m.page)
+	}
+	if cmd == nil {
+		t.Fatal("left on list should quit")
+	}
+}
+
+func TestEnterEscAndQDoNotSwitchOrQuit(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.page != pageList {
+		t.Fatalf("page after enter = %v, want list", m.page)
+	}
+	if cmd != nil {
+		t.Fatalf("enter should not create command: %#v", cmd)
+	}
+
+	m.page = pageDetail
+	m.detail = detailState{Fund: Position{Code: "000001", Name: "华夏成长"}}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	if m.page != pageDetail {
+		t.Fatalf("page after esc = %v, want detail", m.page)
 	}
 	if cmd != nil {
 		t.Fatalf("esc should not create command: %#v", cmd)
+	}
+
+	m.page = pageList
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(model)
+	if m.page != pageList {
+		t.Fatalf("page after q = %v, want list", m.page)
+	}
+	if cmd != nil {
+		t.Fatalf("q should not create command: %#v", cmd)
+	}
+}
+
+func TestCtrlCQuits(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001", Name: "华夏成长"}}}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(model)
+	if m.page != pageList {
+		t.Fatalf("page after ctrl+c = %v, want list", m.page)
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+c should quit")
 	}
 }
 

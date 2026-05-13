@@ -124,9 +124,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			return m, tea.Quit
-		case "esc", "backspace":
+		case "left":
+			if m.page == pageDetail {
+				m.page = pageList
+				return m, nil
+			}
+			return m, tea.Quit
+		case "backspace":
 			if m.page == pageDetail {
 				m.page = pageList
 				return m, nil
@@ -140,7 +146,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == pageList {
 				m.moveCursor(1)
 			}
-		case "enter":
+		case "right":
 			if m.page == pageList && len(m.rows) > 0 {
 				m.openDetail(m.rows[m.cursor].Position)
 				return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
@@ -265,7 +271,7 @@ func (m model) View() string {
 		m.loading,
 		m.errText != "",
 		m.lastRefresh,
-		"↑/↓ select  enter detail  r refresh  q quit",
+		"↑/↓ select  → detail  r refresh",
 		m.statusSpinner().View(),
 	)))
 	b.WriteString("\n\n")
@@ -689,7 +695,7 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 	b.WriteString(tuiTitleStyle.Render(fundPositionLabel(state.Fund)))
 	b.WriteString("\n")
 
-	help := "esc back  r refresh  q quit"
+	help := "← back  r refresh"
 	if state.Data.ReportDate != "" {
 		help = "report " + state.Data.ReportDate + "  " + help
 	}
