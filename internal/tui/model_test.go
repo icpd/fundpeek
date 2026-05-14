@@ -194,6 +194,64 @@ func TestRenderTableHeaderAlignsWithRows(t *testing.T) {
 	}
 }
 
+func TestRenderTableMarksLatestPercentUpdatedToday(t *testing.T) {
+	now := time.Date(2026, 5, 14, 9, 30, 0, 0, time.Local)
+	out := renderTableWithCursorAt([]Row{
+		{
+			Position: Position{Code: "000001", Name: "华夏成长"},
+			Quote: valuation.Quote{
+				ZZL:    1.23,
+				HasZZL: true,
+				JZRQ:   "2026-05-14",
+			},
+		},
+	}, -1, 0, now)
+
+	if !strings.Contains(out, "✓ ") || !strings.Contains(out, "+1.23%") {
+		t.Fatalf("rendered table should mark today's latest percent:\n%s", out)
+	}
+}
+
+func TestRenderTableDoesNotMarkLatestPercentFromOlderDate(t *testing.T) {
+	now := time.Date(2026, 5, 14, 9, 30, 0, 0, time.Local)
+	out := renderTableWithCursorAt([]Row{
+		{
+			Position: Position{Code: "000001", Name: "华夏成长"},
+			Quote: valuation.Quote{
+				ZZL:    1.23,
+				HasZZL: true,
+				JZRQ:   "2026-05-13",
+			},
+		},
+	}, -1, 0, now)
+
+	if strings.Contains(out, "✓") {
+		t.Fatalf("rendered table should not mark an older latest percent:\n%s", out)
+	}
+	if !strings.Contains(out, "+1.23%") {
+		t.Fatalf("rendered table should keep the latest percent value:\n%s", out)
+	}
+}
+
+func TestRenderTableDoesNotMarkMissingLatestPercent(t *testing.T) {
+	now := time.Date(2026, 5, 14, 9, 30, 0, 0, time.Local)
+	out := renderTableWithCursorAt([]Row{
+		{
+			Position: Position{Code: "000001", Name: "华夏成长"},
+			Quote: valuation.Quote{
+				JZRQ: "2026-05-14",
+			},
+		},
+	}, -1, 0, now)
+
+	if strings.Contains(out, "✓") {
+		t.Fatalf("rendered table should not mark a missing latest percent:\n%s", out)
+	}
+	if !strings.Contains(out, "--") {
+		t.Fatalf("rendered table should keep missing latest percent placeholder:\n%s", out)
+	}
+}
+
 func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
 	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
 	out := renderTable([]Row{

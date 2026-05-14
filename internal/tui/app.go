@@ -627,6 +627,10 @@ func renderTable(rows []Row) string {
 }
 
 func renderTableWithCursor(rows []Row, cursor int, width int) string {
+	return renderTableWithCursorAt(rows, cursor, width, time.Now())
+}
+
+func renderTableWithCursorAt(rows []Row, cursor int, width int, now time.Time) string {
 	const (
 		selectorWidth = 2
 		estWidth      = 12
@@ -655,7 +659,7 @@ func renderTableWithCursor(rows []Row, cursor int, width int) string {
 		b.WriteString(cell(fundLabel(row, fundWidth), fundWidth, lipgloss.Left))
 		b.WriteString(cell(formatPercent(row.Quote.GSZZL, row.Quote.HasGSZZL), estWidth, lipgloss.Right))
 		b.WriteString(cell(formatMoney(row.TodayProfit, row.HasProfit), profitWidth, lipgloss.Right))
-		b.WriteString(cell(formatPercent(row.Quote.ZZL, row.Quote.HasZZL), latestWidth, lipgloss.Right))
+		b.WriteString(cell(formatLatestPercent(row.Quote, now), latestWidth, lipgloss.Right))
 		if row.QuoteErr != nil {
 			b.WriteString(" ")
 			b.WriteString(tuiErrStyle.Render("!"))
@@ -672,6 +676,17 @@ func renderTableWithCursor(rows []Row, cursor int, width int) string {
 	b.WriteString(cell("", latestWidth, lipgloss.Right))
 	b.WriteString("\n")
 	return b.String()
+}
+
+func formatLatestPercent(quote valuation.Quote, now time.Time) string {
+	if !quote.HasZZL {
+		return formatPercent(quote.ZZL, quote.HasZZL)
+	}
+	text := formatPercent(quote.ZZL, quote.HasZZL)
+	if quote.JZRQ == now.Format("2006-01-02") {
+		return tuiHelpStyle.Render("✓ ") + text
+	}
+	return text
 }
 
 func fundListNameWidth(windowWidth int) int {
