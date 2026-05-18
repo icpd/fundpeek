@@ -769,7 +769,7 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 		b.WriteString(cell(stockLabel(row), stockWidth, lipgloss.Left))
 		b.WriteString(cell(formatPercent(row.Quote.ChangePercent, row.Quote.HasChangePercent), chgWidth, lipgloss.Right))
 		b.WriteString(cell(formatNumber(row.Quote.Price, row.Quote.HasPrice), priceWidth, lipgloss.Right))
-		b.WriteString(cell(formatPercent(row.Holding.Weight, row.Holding.HasWeight), weightWidth, lipgloss.Right))
+		b.WriteString(cell(formatUnsignedPercent(row.Holding.Weight, row.Holding.HasWeight), weightWidth, lipgloss.Right))
 		b.WriteString(cell(formatNumber(row.Holding.Shares, row.Holding.HasShares), sharesWidth, lipgloss.Right))
 		b.WriteString(cell(formatNumber(row.Holding.MarketValue, row.Holding.HasMarketValue), valueWidth, lipgloss.Right))
 		if row.QuoteErr {
@@ -915,6 +915,13 @@ func formatPercent(value float64, ok bool) string {
 		return tuiDownStyle.Render(text)
 	}
 	return text
+}
+
+func formatUnsignedPercent(value float64, ok bool) string {
+	if !ok {
+		return "--"
+	}
+	return fmt.Sprintf("%.2f%%", value)
 }
 
 func formatMoney(value float64, ok bool) string {

@@ -987,4 +987,9 @@ func TestRenderDetailShowsHoldingsAndPartialQuoteFailure(t *testing.T) {
 			t.Fatalf("renderDetail missing %q:\n%s", want, out)
 		}
 	}
+	for _, unwanted := range []string{"+9.87%", "+8.01%"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("renderDetail contains signed holding weight %q:\n%s", unwanted, out)
+		}
+	}
 }
