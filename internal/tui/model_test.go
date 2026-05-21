@@ -608,21 +608,41 @@ func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
 	}
 }
 
-func TestMoveCursorClampsToRows(t *testing.T) {
+func TestMoveCursorWrapsAroundRows(t *testing.T) {
 	m := model{rows: []Row{
 		{Position: Position{Code: "000001"}},
 		{Position: Position{Code: "000002"}},
 	}}
 
-	m.moveCursor(1)
-	m.moveCursor(1)
-	if m.cursor != 1 {
-		t.Fatalf("cursor after moving down = %d, want 1", m.cursor)
+	m.moveCursor(-1)
+	if m.cursor != 1 || m.selectedCode != "000002" {
+		t.Fatalf("cursor after moving up from first = %d/%q, want 1/000002", m.cursor, m.selectedCode)
 	}
+	m.moveCursor(1)
+	if m.cursor != 0 || m.selectedCode != "000001" {
+		t.Fatalf("cursor after moving down from last = %d/%q, want 0/000001", m.cursor, m.selectedCode)
+	}
+}
+
+func TestMoveCursorKeepsSingleRowSelected(t *testing.T) {
+	m := model{rows: []Row{{Position: Position{Code: "000001"}}}}
+
 	m.moveCursor(-1)
-	m.moveCursor(-1)
-	if m.cursor != 0 {
-		t.Fatalf("cursor after moving up = %d, want 0", m.cursor)
+	if m.cursor != 0 || m.selectedCode != "000001" {
+		t.Fatalf("cursor after moving up single row = %d/%q, want 0/000001", m.cursor, m.selectedCode)
+	}
+	m.moveCursor(1)
+	if m.cursor != 0 || m.selectedCode != "000001" {
+		t.Fatalf("cursor after moving down single row = %d/%q, want 0/000001", m.cursor, m.selectedCode)
+	}
+}
+
+func TestMoveCursorClearsEmptyRows(t *testing.T) {
+	m := model{cursor: 2, selectedCode: "000001"}
+
+	m.moveCursor(1)
+	if m.cursor != 0 || m.selectedCode != "" {
+		t.Fatalf("cursor after moving empty rows = %d/%q, want 0/empty", m.cursor, m.selectedCode)
 	}
 }
 

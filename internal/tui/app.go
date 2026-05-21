@@ -350,10 +350,10 @@ func (m *model) moveCursor(delta int) {
 	}
 	m.cursor += delta
 	if m.cursor < 0 {
-		m.cursor = 0
+		m.cursor = len(m.rows) - 1
 	}
 	if m.cursor >= len(m.rows) {
-		m.cursor = len(m.rows) - 1
+		m.cursor = 0
 	}
 	m.selectedCode = m.rows[m.cursor].Code
 }
