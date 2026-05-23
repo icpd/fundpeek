@@ -13,6 +13,7 @@ import (
 	fundapp "github.com/icpd/fundpeek/internal/app"
 	fundcache "github.com/icpd/fundpeek/internal/cache"
 	"github.com/icpd/fundpeek/internal/config"
+	"github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/tui"
 	"github.com/icpd/fundpeek/internal/valuation"
 )
@@ -21,12 +22,24 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 	generatedAt := time.Date(2026, 5, 19, 10, 30, 0, 0, time.UTC)
 	rows := []tui.Row{
 		{
-			Position: tui.Position{Code: "000001", Name: "华夏成长", Share: 100},
+			Position: tui.Position{
+				Code:             "000001",
+				Name:             "华夏成长",
+				Share:            100,
+				HoldingAmount:    101,
+				HasHoldingAmount: true,
+				CostAmount:       95,
+				HasCostAmount:    true,
+				CostNAV:          0.95,
+				HasCostNAV:       true,
+			},
 			Quote: valuation.Quote{
 				Code:     "000001",
 				Name:     "华夏成长混合",
 				GSZ:      1.02,
 				HasGSZ:   true,
+				DWJZ:     1.01,
+				HasDWJZ:  true,
 				GSZZL:    2,
 				HasGSZZL: true,
 				ZZL:      1.1,
@@ -58,6 +71,18 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 	if !doc.Summary.EstimatedChangePercent.Available || math.Abs(doc.Summary.EstimatedChangePercent.Value-2) > 0.000001 {
 		t.Fatalf("estimated change summary = %#v, want available value 2", doc.Summary.EstimatedChangePercent)
 	}
+	if !doc.Summary.TotalHoldingAmount.Available || doc.Summary.TotalHoldingAmount.Value != 101 {
+		t.Fatalf("holding amount summary = %#v, want available value 101", doc.Summary.TotalHoldingAmount)
+	}
+	if !doc.Summary.TotalCostAmount.Available || doc.Summary.TotalCostAmount.Value != 95 {
+		t.Fatalf("cost amount summary = %#v, want available value 95", doc.Summary.TotalCostAmount)
+	}
+	if !doc.Summary.TotalEstimatedAmount.Available || doc.Summary.TotalEstimatedAmount.Value != 102 {
+		t.Fatalf("estimated amount summary = %#v, want available value 102", doc.Summary.TotalEstimatedAmount)
+	}
+	if !doc.Summary.TotalLatestNAVAmount.Available || doc.Summary.TotalLatestNAVAmount.Value != 101 {
+		t.Fatalf("latest nav amount summary = %#v, want available value 101", doc.Summary.TotalLatestNAVAmount)
+	}
 	if len(doc.Funds) != 2 {
 		t.Fatalf("len(funds) = %d, want 2", len(doc.Funds))
 	}
@@ -69,6 +94,21 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 	}
 	if !doc.Funds[0].EstimatedChangePercent.Available || doc.Funds[0].EstimatedChangePercent.Value != 2 {
 		t.Fatalf("first fund estimated change = %#v, want 2", doc.Funds[0].EstimatedChangePercent)
+	}
+	if !doc.Funds[0].HoldingAmount.Available || doc.Funds[0].HoldingAmount.Value != 101 {
+		t.Fatalf("first fund holding amount = %#v, want available 101", doc.Funds[0].HoldingAmount)
+	}
+	if !doc.Funds[0].CostAmount.Available || doc.Funds[0].CostAmount.Value != 95 {
+		t.Fatalf("first fund cost amount = %#v, want available 95", doc.Funds[0].CostAmount)
+	}
+	if !doc.Funds[0].CostNAV.Available || doc.Funds[0].CostNAV.Value != 0.95 {
+		t.Fatalf("first fund cost nav = %#v, want available 0.95", doc.Funds[0].CostNAV)
+	}
+	if !doc.Funds[0].EstimatedAmount.Available || doc.Funds[0].EstimatedAmount.Value != 102 {
+		t.Fatalf("first fund estimated amount = %#v, want available 102", doc.Funds[0].EstimatedAmount)
+	}
+	if !doc.Funds[0].LatestNAVAmount.Available || doc.Funds[0].LatestNAVAmount.Value != 101 {
+		t.Fatalf("first fund latest nav amount = %#v, want available 101", doc.Funds[0].LatestNAVAmount)
 	}
 	if doc.Funds[1].QuoteAvailable {
 		t.Fatalf("second fund quote should be unavailable: %#v", doc.Funds[1])
@@ -130,7 +170,12 @@ func TestWriteRefreshesQuotesAndEncodesDocument(t *testing.T) {
 		},
 		"groupHoldings": map[string]any{
 			"import_yangjibao_default": map[string]any{
-				"000001": map[string]any{"share": 100},
+				"000001": map[string]any{"share": 100, "cost": 0.9},
+			},
+		},
+		model.PortfolioHoldingDetailsKey: map[string]any{
+			"import_yangjibao_default": map[string]any{
+				"000001": map[string]any{"amount": 100.5},
 			},
 		},
 	}); err != nil {

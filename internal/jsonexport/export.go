@@ -25,12 +25,21 @@ type Summary struct {
 	FundCount              int        `json:"fund_count"`
 	EstimatedChangePercent JSONNumber `json:"estimated_change_percent"`
 	TodayProfitAmount      JSONNumber `json:"today_profit_amount"`
+	TotalHoldingAmount     JSONNumber `json:"total_holding_amount"`
+	TotalCostAmount        JSONNumber `json:"total_cost_amount"`
+	TotalEstimatedAmount   JSONNumber `json:"total_estimated_amount"`
+	TotalLatestNAVAmount   JSONNumber `json:"total_latest_nav_amount"`
 }
 
 type Fund struct {
 	Code                   string     `json:"code"`
 	Name                   string     `json:"name"`
 	Share                  float64    `json:"share"`
+	HoldingAmount          JSONNumber `json:"holding_amount"`
+	CostAmount             JSONNumber `json:"cost_amount"`
+	CostNAV                JSONNumber `json:"cost_nav"`
+	EstimatedAmount        JSONNumber `json:"estimated_amount"`
+	LatestNAVAmount        JSONNumber `json:"latest_nav_amount"`
 	EstimatedChangePercent JSONNumber `json:"estimated_change_percent"`
 	TodayProfitAmount      JSONNumber `json:"today_profit_amount"`
 	LatestNAVChangePercent JSONNumber `json:"latest_nav_change_percent"`
@@ -76,17 +85,41 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 	var hasTodayProfit bool
 	var estimatedProfit float64
 	var previousValue float64
+	var totalHoldingAmount float64
+	var hasHoldingAmount bool
+	var totalCostAmount float64
+	var hasCostAmount bool
+	var totalEstimatedAmount float64
+	var hasEstimatedAmount bool
+	var totalLatestNAVAmount float64
+	var hasLatestNAVAmount bool
 
 	for _, row := range rows {
 		if row.HasProfit {
 			todayProfit += row.TodayProfit
 			hasTodayProfit = true
 		}
+		if row.HasHoldingAmount {
+			totalHoldingAmount += row.HoldingAmount
+			hasHoldingAmount = true
+		}
+		if row.HasCostAmount {
+			totalCostAmount += row.CostAmount
+			hasCostAmount = true
+		}
 		if row.Quote.HasGSZ && row.Quote.HasGSZZL && row.Quote.GSZZL > -100 {
 			currentValue := row.Share * row.Quote.GSZ
 			rowPreviousValue := currentValue / (1 + row.Quote.GSZZL/100)
 			estimatedProfit += currentValue - rowPreviousValue
 			previousValue += rowPreviousValue
+		}
+		if row.Quote.HasGSZ {
+			totalEstimatedAmount += row.Share * row.Quote.GSZ
+			hasEstimatedAmount = true
+		}
+		if row.Quote.HasDWJZ {
+			totalLatestNAVAmount += row.Share * row.Quote.DWJZ
+			hasLatestNAVAmount = true
 		}
 		doc.Funds = append(doc.Funds, buildFund(row))
 	}
@@ -95,6 +128,18 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 	}
 	if previousValue > 0 {
 		doc.Summary.EstimatedChangePercent = available(estimatedProfit / previousValue * 100)
+	}
+	if hasHoldingAmount {
+		doc.Summary.TotalHoldingAmount = available(totalHoldingAmount)
+	}
+	if hasCostAmount {
+		doc.Summary.TotalCostAmount = available(totalCostAmount)
+	}
+	if hasEstimatedAmount {
+		doc.Summary.TotalEstimatedAmount = available(totalEstimatedAmount)
+	}
+	if hasLatestNAVAmount {
+		doc.Summary.TotalLatestNAVAmount = available(totalLatestNAVAmount)
 	}
 	return doc
 }
@@ -111,6 +156,21 @@ func buildFund(row tui.Row) Fund {
 		QuoteTime:      row.Quote.GZTime,
 		NAVDate:        row.Quote.JZRQ,
 		QuoteAvailable: quoteAvailable(row),
+	}
+	if row.HasHoldingAmount {
+		fund.HoldingAmount = available(row.HoldingAmount)
+	}
+	if row.HasCostAmount {
+		fund.CostAmount = available(row.CostAmount)
+	}
+	if row.HasCostNAV {
+		fund.CostNAV = available(row.CostNAV)
+	}
+	if row.Quote.HasGSZ {
+		fund.EstimatedAmount = available(row.Share * row.Quote.GSZ)
+	}
+	if row.Quote.HasDWJZ {
+		fund.LatestNAVAmount = available(row.Share * row.Quote.DWJZ)
 	}
 	if row.Quote.HasGSZZL {
 		fund.EstimatedChangePercent = available(row.Quote.GSZZL)

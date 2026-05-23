@@ -42,6 +42,8 @@ func TestApplyReplacesOnlySourceImportGroups(t *testing.T) {
 			FundName:          "new name ignored",
 			Share:             10,
 			CostNav:           1.23,
+			Amount:            12.5,
+			OperationDate:     "2026-05-19",
 		}},
 	})
 	if err != nil {
@@ -71,6 +73,15 @@ func TestApplyReplacesOnlySourceImportGroups(t *testing.T) {
 	}
 	if _, ok := groupHoldings["import_xiaobei_keep"]; !ok {
 		t.Fatal("other source group holding was removed")
+	}
+	holding := groupHoldings["import_yangjibao_acc1"].(map[string]any)["000001"].(map[string]any)
+	if _, ok := holding["amount"]; ok {
+		t.Fatalf("real-compatible group holding should not include local amount metadata: %#v", holding)
+	}
+	details := data[model.PortfolioHoldingDetailsKey].(map[string]any)
+	detail := details["import_yangjibao_acc1"].(map[string]any)["000001"].(map[string]any)
+	if detail["amount"] != 12.5 || detail["operationDate"] != "2026-05-19" {
+		t.Fatalf("holding details = %#v, want amount and operation date", detail)
 	}
 }
 

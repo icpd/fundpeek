@@ -57,6 +57,7 @@ func Apply(data map[string]any, input model.SyncInput) (Report, error) {
 
 	groupHoldings := mergeGroupHoldings(data["groupHoldings"], input.Source, input.Holdings)
 	data["groupHoldings"] = groupHoldings
+	data[model.PortfolioHoldingDetailsKey] = mergeHoldingDetails(data[model.PortfolioHoldingDetailsKey], input.Source, input.Holdings)
 	for _, holding := range input.Holdings {
 		report.UpdatedHoldings++
 		if holding.EstimatedShare {
@@ -168,6 +169,42 @@ func mergeGroupHoldings(existing any, source string, holdings []model.Normalized
 			"share": holding.Share,
 			"cost":  holding.CostNav,
 		}
+		out[gid] = group
+	}
+	return out
+}
+
+func mergeHoldingDetails(existing any, source string, holdings []model.NormalizedHolding) map[string]any {
+	out := toMap(existing)
+	for key := range out {
+		if isImportGroup(source, key) {
+			delete(out, key)
+		}
+	}
+	for _, holding := range holdings {
+		if holding.FundCode == "" {
+			continue
+		}
+		detail := map[string]any{}
+		if holding.Amount > 0 {
+			detail["amount"] = holding.Amount
+		}
+		if holding.OperationDate != "" {
+			detail["operationDate"] = holding.OperationDate
+		}
+		if holding.EstimatedShare {
+			detail["estimatedShare"] = true
+		}
+		if len(detail) == 0 {
+			continue
+		}
+		accountID := holding.ExternalAccountID
+		if accountID == "" {
+			accountID = "default"
+		}
+		gid := groupID(source, accountID)
+		group := toMap(out[gid])
+		group[holding.FundCode] = detail
 		out[gid] = group
 	}
 	return out

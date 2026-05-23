@@ -5,13 +5,20 @@ import (
 	"strconv"
 	"strings"
 
+	fundmodel "github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/valuation"
 )
 
 type Position struct {
-	Code  string
-	Name  string
-	Share float64
+	Code             string
+	Name             string
+	Share            float64
+	HoldingAmount    float64
+	HasHoldingAmount bool
+	CostAmount       float64
+	HasCostAmount    bool
+	CostNAV          float64
+	HasCostNAV       bool
 }
 
 type Row struct {
@@ -27,11 +34,13 @@ func BuildPositions(data map[string]any) []Position {
 		return nil
 	}
 	names := fundNames(data["funds"])
+	holdingDetails := toMap(data[fundmodel.PortfolioHoldingDetailsKey])
 	byCode := map[string]*Position{}
 	for groupID, bucket := range toMap(data["groupHoldings"]) {
 		if !isImportGroup(groupID) {
 			continue
 		}
+		detailsByCode := toMap(holdingDetails[groupID])
 		for code, rawHolding := range toMap(bucket) {
 			code = strings.TrimSpace(code)
 			if code == "" {
@@ -47,10 +56,22 @@ func BuildPositions(data map[string]any) []Position {
 				byCode[code] = pos
 			}
 			pos.Share += share
+			if cost, ok := numberFromAny(toMap(rawHolding)["cost"]); ok && cost > 0 {
+				pos.CostAmount += share * cost
+				pos.HasCostAmount = true
+			}
+			if amount, ok := numberFromAny(toMap(detailsByCode[code])["amount"]); ok && amount > 0 {
+				pos.HoldingAmount += amount
+				pos.HasHoldingAmount = true
+			}
 		}
 	}
 	out := make([]Position, 0, len(byCode))
 	for _, pos := range byCode {
+		if pos.HasCostAmount && pos.Share > 0 {
+			pos.CostNAV = pos.CostAmount / pos.Share
+			pos.HasCostNAV = true
+		}
 		out = append(out, *pos)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -97,7 +118,7 @@ func BuildRows(positions []Position, quotes map[string]valuation.Quote, errs map
 }
 
 func isImportGroup(id string) bool {
-	return strings.HasPrefix(id, "import_yangjibao_") || strings.HasPrefix(id, "import_xiaobei_")
+	return strings.HasPrefix(id, "import_"+fundmodel.SourceYangJiBao+"_") || strings.HasPrefix(id, "import_"+fundmodel.SourceXiaoBei+"_")
 }
 
 func fundNames(value any) map[string]string {

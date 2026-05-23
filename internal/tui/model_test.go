@@ -12,6 +12,7 @@ import (
 	fundapp "github.com/icpd/fundpeek/internal/app"
 	fundcache "github.com/icpd/fundpeek/internal/cache"
 	"github.com/icpd/fundpeek/internal/config"
+	fundmodel "github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/valuation"
 )
 
@@ -26,10 +27,18 @@ func TestBuildPositionsAggregatesImportedGroupHoldingsOnly(t *testing.T) {
 				"000002": map[string]any{"share": 99},
 			},
 			"import_yangjibao_a": map[string]any{
-				"000001": map[string]any{"share": 10},
+				"000001": map[string]any{"share": 10, "cost": 1.2},
 			},
 			"import_xiaobei_b": map[string]any{
-				"000001": map[string]any{"share": 2.5},
+				"000001": map[string]any{"share": 2.5, "cost": 1.4},
+			},
+		},
+		fundmodel.PortfolioHoldingDetailsKey: map[string]any{
+			"import_yangjibao_a": map[string]any{
+				"000001": map[string]any{"amount": 12.3},
+			},
+			"import_xiaobei_b": map[string]any{
+				"000001": map[string]any{"amount": 3.6},
 			},
 		},
 	}
@@ -43,6 +52,15 @@ func TestBuildPositionsAggregatesImportedGroupHoldingsOnly(t *testing.T) {
 	}
 	if math.Abs(got[0].Share-12.5) > 0.000001 {
 		t.Fatalf("share = %f, want 12.5", got[0].Share)
+	}
+	if !got[0].HasHoldingAmount || math.Abs(got[0].HoldingAmount-15.9) > 0.000001 {
+		t.Fatalf("holding amount = %#v, want available 15.9", got[0])
+	}
+	if !got[0].HasCostAmount || math.Abs(got[0].CostAmount-15.5) > 0.000001 {
+		t.Fatalf("cost amount = %#v, want available 15.5", got[0])
+	}
+	if !got[0].HasCostNAV || math.Abs(got[0].CostNAV-1.24) > 0.000001 {
+		t.Fatalf("cost nav = %#v, want available 1.24", got[0])
 	}
 }
 

@@ -688,6 +688,7 @@ func mergePortfolioIntoRemote(remote, local map[string]any) (map[string]any, err
 	out["funds"] = mergePortfolioFunds(out["funds"], localClone["funds"])
 	out["groups"] = replaceImportedGroups(out["groups"], localClone["groups"])
 	out["groupHoldings"] = replaceImportedGroupHoldings(out["groupHoldings"], localClone["groupHoldings"])
+	delete(out, model.PortfolioHoldingDetailsKey)
 	return out, nil
 }
 

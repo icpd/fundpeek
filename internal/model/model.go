@@ -11,6 +11,8 @@ const (
 	SourceReal      = "real"
 	SourceYangJiBao = "yangjibao"
 	SourceXiaoBei   = "xiaobei"
+
+	PortfolioHoldingDetailsKey = "fundpeekHoldings"
 )
 
 type RealCredential struct {

@@ -100,6 +100,21 @@ func TestPushRealUpdatesRealDataCache(t *testing.T) {
 	if err := a.setPortfolioDataCache(testPortfolioData("000001", model.SourceYangJiBao)); err != nil {
 		t.Fatal(err)
 	}
+	local, ok, err := a.CachedPortfolioData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected cached portfolio data")
+	}
+	local[model.PortfolioHoldingDetailsKey] = map[string]any{
+		"import_yangjibao_default": map[string]any{
+			"000001": map[string]any{"amount": 123.45},
+		},
+	}
+	if err := a.setPortfolioDataCache(local); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := a.PushReal(context.Background()); err != nil {
 		t.Fatal(err)
@@ -184,6 +199,9 @@ func TestPushRealPreservesRemoteManualGroups(t *testing.T) {
 			"manual":               map[string]any{"000999": map[string]any{"share": 10, "cost": 1}},
 			"import_yangjibao_old": map[string]any{"000888": map[string]any{"share": 1, "cost": 1}},
 		},
+		model.PortfolioHoldingDetailsKey: map[string]any{
+			"import_yangjibao_old": map[string]any{"000888": map[string]any{"amount": 9.99}},
+		},
 	}
 	if err := a.setPortfolioDataCache(testPortfolioData("000001", model.SourceYangJiBao)); err != nil {
 		t.Fatal(err)
@@ -200,6 +218,9 @@ func TestPushRealPreservesRemoteManualGroups(t *testing.T) {
 	}
 	if hasGroup(fake.updatedData["groups"], "import_yangjibao_old") {
 		t.Fatalf("updated real data should replace old import groups: %#v", fake.updatedData)
+	}
+	if _, ok := fake.updatedData[model.PortfolioHoldingDetailsKey]; ok {
+		t.Fatalf("updated real data should not include local holding details: %#v", fake.updatedData)
 	}
 }
 
