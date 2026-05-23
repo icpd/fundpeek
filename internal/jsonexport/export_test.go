@@ -65,8 +65,8 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 	if doc.Summary.FundCount != 2 {
 		t.Fatalf("fund count = %d, want 2", doc.Summary.FundCount)
 	}
-	if !doc.Summary.TodayProfitAmount.Available || doc.Summary.TodayProfitAmount.Value != 2 {
-		t.Fatalf("today profit summary = %#v, want available value 2", doc.Summary.TodayProfitAmount)
+	if !doc.Summary.EstimatedTodayProfitAmount.Available || doc.Summary.EstimatedTodayProfitAmount.Value != 2 {
+		t.Fatalf("today profit summary = %#v, want available value 2", doc.Summary.EstimatedTodayProfitAmount)
 	}
 	if !doc.Summary.EstimatedChangePercent.Available || math.Abs(doc.Summary.EstimatedChangePercent.Value-2) > 0.000001 {
 		t.Fatalf("estimated change summary = %#v, want available value 2", doc.Summary.EstimatedChangePercent)
@@ -126,6 +126,12 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 	}
 	if strings.Contains(string(body), "access_token") || strings.Contains(string(body), "account_id") {
 		t.Fatalf("json should not include credentials or raw account fields: %q", body)
+	}
+	if strings.Contains(string(body), "\"today_profit_amount\"") {
+		t.Fatalf("json should not include old profit field name: %q", body)
+	}
+	if !strings.Contains(string(body), "\"estimated_today_profit_amount\"") {
+		t.Fatalf("json should include estimated profit field name: %q", body)
 	}
 }
 

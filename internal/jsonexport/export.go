@@ -22,30 +22,30 @@ type Document struct {
 }
 
 type Summary struct {
-	FundCount              int        `json:"fund_count"`
-	EstimatedChangePercent JSONNumber `json:"estimated_change_percent"`
-	TodayProfitAmount      JSONNumber `json:"today_profit_amount"`
-	TotalHoldingAmount     JSONNumber `json:"total_holding_amount"`
-	TotalCostAmount        JSONNumber `json:"total_cost_amount"`
-	TotalEstimatedAmount   JSONNumber `json:"total_estimated_amount"`
-	TotalLatestNAVAmount   JSONNumber `json:"total_latest_nav_amount"`
+	FundCount                  int        `json:"fund_count"`
+	EstimatedChangePercent     JSONNumber `json:"estimated_change_percent"`
+	EstimatedTodayProfitAmount JSONNumber `json:"estimated_today_profit_amount"`
+	TotalHoldingAmount         JSONNumber `json:"total_holding_amount"`
+	TotalCostAmount            JSONNumber `json:"total_cost_amount"`
+	TotalEstimatedAmount       JSONNumber `json:"total_estimated_amount"`
+	TotalLatestNAVAmount       JSONNumber `json:"total_latest_nav_amount"`
 }
 
 type Fund struct {
-	Code                   string     `json:"code"`
-	Name                   string     `json:"name"`
-	Share                  float64    `json:"share"`
-	HoldingAmount          JSONNumber `json:"holding_amount"`
-	CostAmount             JSONNumber `json:"cost_amount"`
-	CostNAV                JSONNumber `json:"cost_nav"`
-	EstimatedAmount        JSONNumber `json:"estimated_amount"`
-	LatestNAVAmount        JSONNumber `json:"latest_nav_amount"`
-	EstimatedChangePercent JSONNumber `json:"estimated_change_percent"`
-	TodayProfitAmount      JSONNumber `json:"today_profit_amount"`
-	LatestNAVChangePercent JSONNumber `json:"latest_nav_change_percent"`
-	QuoteTime              string     `json:"quote_time,omitempty"`
-	NAVDate                string     `json:"nav_date,omitempty"`
-	QuoteAvailable         bool       `json:"quote_available"`
+	Code                       string     `json:"code"`
+	Name                       string     `json:"name"`
+	Share                      float64    `json:"share"`
+	HoldingAmount              JSONNumber `json:"holding_amount"`
+	CostAmount                 JSONNumber `json:"cost_amount"`
+	CostNAV                    JSONNumber `json:"cost_nav"`
+	EstimatedAmount            JSONNumber `json:"estimated_amount"`
+	LatestNAVAmount            JSONNumber `json:"latest_nav_amount"`
+	EstimatedChangePercent     JSONNumber `json:"estimated_change_percent"`
+	EstimatedTodayProfitAmount JSONNumber `json:"estimated_today_profit_amount"`
+	LatestNAVChangePercent     JSONNumber `json:"latest_nav_change_percent"`
+	QuoteTime                  string     `json:"quote_time,omitempty"`
+	NAVDate                    string     `json:"nav_date,omitempty"`
+	QuoteAvailable             bool       `json:"quote_available"`
 }
 
 type FundError struct {
@@ -124,7 +124,7 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 		doc.Funds = append(doc.Funds, buildFund(row))
 	}
 	if hasTodayProfit {
-		doc.Summary.TodayProfitAmount = available(todayProfit)
+		doc.Summary.EstimatedTodayProfitAmount = available(todayProfit)
 	}
 	if previousValue > 0 {
 		doc.Summary.EstimatedChangePercent = available(estimatedProfit / previousValue * 100)
@@ -176,7 +176,7 @@ func buildFund(row tui.Row) Fund {
 		fund.EstimatedChangePercent = available(row.Quote.GSZZL)
 	}
 	if row.HasProfit {
-		fund.TodayProfitAmount = available(row.TodayProfit)
+		fund.EstimatedTodayProfitAmount = available(row.TodayProfit)
 	}
 	if row.Quote.HasZZL {
 		fund.LatestNAVChangePercent = available(row.Quote.ZZL)
