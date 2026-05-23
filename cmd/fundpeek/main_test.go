@@ -122,6 +122,7 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"fundpeek sync",
 		"fundpeek json",
 		"fundpeek push real",
+		"fundpeek help sync",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help missing %q:\n%s", want, out)
@@ -131,6 +132,124 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("help should not mention %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+func TestSubcommandHelpIncludesUsage(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "auth",
+			args: []string{"auth", "--help"},
+			want: []string{"fundpeek auth - 登录数据源", "Usage:", "fundpeek auth <source>", "yangjibao", "fundpeek auth yjb"},
+		},
+		{
+			name: "status",
+			args: []string{"status", "--help"},
+			want: []string{"fundpeek status - 查看各数据源登录状态", "Usage:", "fundpeek status"},
+		},
+		{
+			name: "tui",
+			args: []string{"tui", "--help"},
+			want: []string{"fundpeek tui - 打开基金估值和持仓 TUI", "Usage:", "fundpeek tui", "r 刷新当前页"},
+		},
+		{
+			name: "json",
+			args: []string{"json", "--help"},
+			want: []string{"fundpeek json - 输出基金持仓和行情 JSON", "Usage:", "fundpeek json", "errors 字段"},
+		},
+		{
+			name: "sync",
+			args: []string{"sync", "--help"},
+			want: []string{"fundpeek sync - 刷新本地持仓数据", "Usage:", "fundpeek sync [source]", "默认值"},
+		},
+		{
+			name: "push",
+			args: []string{"push", "--help"},
+			want: []string{"fundpeek push - 推送本地持仓数据到远端", "Usage:", "fundpeek push real", "不会自动推送远端数据"},
+		},
+		{
+			name: "push target trailing help",
+			args: []string{"push", "real", "--help"},
+			want: []string{"fundpeek push - 推送本地持仓数据到远端", "Usage:", "fundpeek push real"},
+		},
+		{
+			name: "logout",
+			args: []string{"logout", "--help"},
+			want: []string{"fundpeek logout - 退出指定数据源登录", "Usage:", "fundpeek logout <source>", "fundpeek logout yjb"},
+		},
+		{
+			name: "help topic",
+			args: []string{"help", "sync"},
+			want: []string{"fundpeek sync - 刷新本地持仓数据", "fundpeek sync [source]"},
+		},
+		{
+			name: "help argument",
+			args: []string{"sync", "help"},
+			want: []string{"fundpeek sync - 刷新本地持仓数据", "fundpeek sync [source]"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runWithStdout(t, tt.args...)
+			if err != nil {
+				t.Fatalf("run(%v) returned error: %v", tt.args, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("subcommand help missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestSubcommandHelpDoesNotCreateConfigFiles(t *testing.T) {
+	tests := [][]string{
+		{"help", "sync"},
+		{"sync", "--help"},
+		{"sync", "help"},
+		{"push", "real", "--help"},
+	}
+
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
+
+			if _, err := runWithStdout(t, args...); err != nil {
+				t.Fatalf("run(%v) returned error: %v", args, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "device_id")); !os.IsNotExist(err) {
+				t.Fatalf("subcommand help should not create device_id, stat err: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
+				t.Fatalf("subcommand help should not create backup dir, stat err: %v", err)
+			}
+		})
+	}
+}
+
+func TestUnknownHelpTopicDoesNotCreateConfigFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FUNDPEEK_CONFIG_DIR", dir)
+
+	out, err := runWithStdout(t, "help", "wat")
+	if err == nil || !strings.Contains(err.Error(), "unknown help topic") {
+		t.Fatalf("run(help wat) err = %v, want unknown help topic", err)
+	}
+	if !strings.Contains(out, "fundpeek <command> [arguments]") {
+		t.Fatalf("unknown help topic should print top-level usage:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "device_id")); !os.IsNotExist(err) {
+		t.Fatalf("unknown help topic should not create device_id, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
+		t.Fatalf("unknown help topic should not create backup dir, stat err: %v", err)
 	}
 }
 
@@ -175,14 +294,27 @@ func TestUnknownCommandDoesNotCreateConfigFiles(t *testing.T) {
 	}
 }
 
+func runWithStdout(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	os.Args = append([]string{"fundpeek"}, args...)
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = run()
+	})
+	return out, runErr
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Stdout = oldStdout })
 	os.Stdout = w
 
 	fn()

@@ -32,9 +32,8 @@ func run() error {
 		printUsage()
 		return nil
 	}
-	if isHelpCommand(args[0]) {
-		printUsage()
-		return nil
+	if handled, err := handleHelp(args); handled {
+		return err
 	}
 	if !isKnownCommand(args[0]) {
 		printUsage()
@@ -128,6 +127,44 @@ func isHelpCommand(command string) bool {
 	}
 }
 
+func handleHelp(args []string) (bool, error) {
+	if isHelpCommand(args[0]) {
+		if len(args) == 1 {
+			printUsage()
+			return true, nil
+		}
+		if len(args) > 2 {
+			printUsage()
+			return true, errors.New("too many help arguments")
+		}
+		if isHelpCommand(args[1]) {
+			printUsage()
+			return true, nil
+		}
+		if !printCommandUsage(args[1]) {
+			printUsage()
+			return true, fmt.Errorf("unknown help topic %q", args[1])
+		}
+		return true, nil
+	}
+
+	if isKnownCommand(args[0]) && hasHelpArgument(args[1:]) {
+		printCommandUsage(args[0])
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func hasHelpArgument(args []string) bool {
+	for _, arg := range args {
+		if isHelpCommand(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 func isKnownCommand(command string) bool {
 	switch command {
 	case "auth", "status", "sync", "push", "logout", "tui", "json":
@@ -219,7 +256,7 @@ Commands:
   sync [source]                 刷新本地持仓数据，可选 yjb、xb、all，默认 all
   push real                     将本地持仓数据同步到基估宝
   logout <source>               退出指定数据源登录
-  help                          显示帮助信息
+  help [command]                显示帮助信息或指定子命令帮助
 
 Sources:
   real        aliases: r
@@ -232,5 +269,112 @@ Examples:
   fundpeek sync
   fundpeek tui
   fundpeek json
+  fundpeek push real
+  fundpeek help sync`)
+}
+
+func printCommandUsage(command string) bool {
+	switch command {
+	case "auth":
+		fmt.Println(`fundpeek auth - 登录数据源
+
+Usage:
+  fundpeek auth <source>
+
+Sources:
+  real        aliases: r        基估宝邮箱 OTP
+  yangjibao   aliases: yjb, yj   养基宝扫码登录
+  xiaobei     aliases: xb, xbyj  小倍养基短信验证码
+
+Examples:
+  fundpeek auth yjb
+  fundpeek auth xb
+  fundpeek auth real`)
+		return true
+	case "status":
+		fmt.Println(`fundpeek status - 查看各数据源登录状态
+
+Usage:
+  fundpeek status
+
+Examples:
+  fundpeek status`)
+		return true
+	case "tui":
+		fmt.Println(`fundpeek tui - 打开基金估值和持仓 TUI
+
+Usage:
+  fundpeek tui
+
+Notes:
+  读取本地 portfolio 快照；首次使用前先执行 fundpeek sync。
+  在交互界面内按 Enter/右方向进入明细，Esc/左方向返回或退出，r 刷新当前页，R 强制刷新相关缓存。
+
+Examples:
+  fundpeek tui`)
+		return true
+	case "json":
+		fmt.Println(`fundpeek json - 输出基金持仓和行情 JSON
+
+Usage:
+  fundpeek json
+
+Notes:
+  读取本地 portfolio 快照并刷新基金行情。
+  单只基金行情失败时仍保留基金，并在 errors 字段记录失败原因。
+
+Examples:
+  fundpeek json`)
+		return true
+	case "sync":
+		fmt.Println(`fundpeek sync - 刷新本地持仓数据
+
+Usage:
+  fundpeek sync [source]
+
+Sources:
+  yangjibao   aliases: yjb, yj
+  xiaobei     aliases: xb, xbyj
+  all         aliases: a        默认值，同步所有已登录基金来源
+
+Examples:
+  fundpeek sync
+  fundpeek sync yjb
+  fundpeek sync xb
+  fundpeek sync all`)
+		return true
+	case "push":
+		fmt.Println(`fundpeek push - 推送本地持仓数据到远端
+
+Usage:
+  fundpeek push real
+
+Targets:
+  real        aliases: r        基估宝
+
+Notes:
+  只会在显式执行 push real 时写入基估宝；sync、tui 和 json 不会自动推送远端数据。
+
+Examples:
   fundpeek push real`)
+		return true
+	case "logout":
+		fmt.Println(`fundpeek logout - 退出指定数据源登录
+
+Usage:
+  fundpeek logout <source>
+
+Sources:
+  real        aliases: r
+  yangjibao   aliases: yjb, yj
+  xiaobei     aliases: xb, xbyj
+
+Examples:
+  fundpeek logout yjb
+  fundpeek logout xb
+  fundpeek logout real`)
+		return true
+	default:
+		return false
+	}
 }
