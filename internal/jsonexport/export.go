@@ -81,8 +81,8 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 		Errors: buildErrors(errs),
 	}
 
-	var todayProfit float64
-	var hasTodayProfit bool
+	var estimatedTodayProfit float64
+	var hasEstimatedTodayProfit bool
 	var estimatedProfit float64
 	var previousValue float64
 	var totalHoldingAmount float64
@@ -95,9 +95,9 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 	var hasLatestNAVAmount bool
 
 	for _, row := range rows {
-		if row.HasProfit {
-			todayProfit += row.TodayProfit
-			hasTodayProfit = true
+		if row.HasEstimatedTodayProfit {
+			estimatedTodayProfit += row.EstimatedTodayProfit
+			hasEstimatedTodayProfit = true
 		}
 		if row.HasHoldingAmount {
 			totalHoldingAmount += row.HoldingAmount
@@ -123,8 +123,8 @@ func BuildDocument(rows []tui.Row, errs map[string]error, generatedAt time.Time)
 		}
 		doc.Funds = append(doc.Funds, buildFund(row))
 	}
-	if hasTodayProfit {
-		doc.Summary.EstimatedTodayProfitAmount = available(todayProfit)
+	if hasEstimatedTodayProfit {
+		doc.Summary.EstimatedTodayProfitAmount = available(estimatedTodayProfit)
 	}
 	if previousValue > 0 {
 		doc.Summary.EstimatedChangePercent = available(estimatedProfit / previousValue * 100)
@@ -175,8 +175,8 @@ func buildFund(row tui.Row) Fund {
 	if row.Quote.HasGSZZL {
 		fund.EstimatedChangePercent = available(row.Quote.GSZZL)
 	}
-	if row.HasProfit {
-		fund.EstimatedTodayProfitAmount = available(row.TodayProfit)
+	if row.HasEstimatedTodayProfit {
+		fund.EstimatedTodayProfitAmount = available(row.EstimatedTodayProfit)
 	}
 	if row.Quote.HasZZL {
 		fund.LatestNAVChangePercent = available(row.Quote.ZZL)

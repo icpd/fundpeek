@@ -64,8 +64,8 @@ func TestBuildPositionsAggregatesImportedGroupHoldingsOnly(t *testing.T) {
 	}
 }
 
-func TestTodayProfitUsesValuationFirst(t *testing.T) {
-	got, ok := TodayProfit(Position{Code: "000001", Share: 100}, valuation.Quote{
+func TestEstimatedTodayProfitUsesValuationFirst(t *testing.T) {
+	got, ok := EstimatedTodayProfit(Position{Code: "000001", Share: 100}, valuation.Quote{
 		GSZ:        1.02,
 		HasGSZ:     true,
 		GSZZL:      2,
@@ -84,8 +84,8 @@ func TestTodayProfitUsesValuationFirst(t *testing.T) {
 	}
 }
 
-func TestTodayProfitFallsBackToLatestNetValue(t *testing.T) {
-	got, ok := TodayProfit(Position{Code: "000001", Share: 100}, valuation.Quote{
+func TestEstimatedTodayProfitFallsBackToLatestNetValue(t *testing.T) {
+	got, ok := EstimatedTodayProfit(Position{Code: "000001", Share: 100}, valuation.Quote{
 		DWJZ:       1.05,
 		HasDWJZ:    true,
 		LastNAV:    1.00,
@@ -122,31 +122,31 @@ func TestSortRowsByEstimatedChangeDescendingWithMissingValuesLast(t *testing.T) 
 func TestSummarizeRowsTotalsProfitAndWeightedEstimatedChange(t *testing.T) {
 	rows := []Row{
 		{
-			Position:    Position{Code: "000001", Share: 100},
-			Quote:       valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true, DWJZ: 1.1, HasDWJZ: true, ZZL: 10, HasZZL: true},
-			TodayProfit: 2,
-			HasProfit:   true,
+			Position:                Position{Code: "000001", Share: 100},
+			Quote:                   valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true, DWJZ: 1.1, HasDWJZ: true, ZZL: 10, HasZZL: true},
+			EstimatedTodayProfit:    2,
+			HasEstimatedTodayProfit: true,
 		},
 		{
-			Position:    Position{Code: "000002", Share: 200},
-			Quote:       valuation.Quote{GSZ: 0.99, HasGSZ: true, GSZZL: -1, HasGSZZL: true, DWJZ: 1.8, HasDWJZ: true, ZZL: -10, HasZZL: true},
-			TodayProfit: -2,
-			HasProfit:   true,
+			Position:                Position{Code: "000002", Share: 200},
+			Quote:                   valuation.Quote{GSZ: 0.99, HasGSZ: true, GSZZL: -1, HasGSZZL: true, DWJZ: 1.8, HasDWJZ: true, ZZL: -10, HasZZL: true},
+			EstimatedTodayProfit:    -2,
+			HasEstimatedTodayProfit: true,
 		},
 		{
-			Position:    Position{Code: "000003", Share: 10},
-			TodayProfit: 5,
-			HasProfit:   true,
+			Position:                Position{Code: "000003", Share: 10},
+			EstimatedTodayProfit:    5,
+			HasEstimatedTodayProfit: true,
 		},
 	}
 
 	got := summarizeRows(rows)
 
-	if !got.HasProfit {
+	if !got.HasEstimatedTodayProfit {
 		t.Fatal("expected total profit")
 	}
-	if math.Abs(got.TodayProfit-5) > 0.000001 {
-		t.Fatalf("total profit = %f, want 5", got.TodayProfit)
+	if math.Abs(got.EstimatedTodayProfit-5) > 0.000001 {
+		t.Fatalf("total profit = %f, want 5", got.EstimatedTodayProfit)
 	}
 	if !got.HasEstimatedChange {
 		t.Fatal("expected estimated change")
@@ -167,10 +167,10 @@ func TestSummarizeRowsTotalsProfitAndWeightedEstimatedChange(t *testing.T) {
 func TestRenderTableSummaryDoesNotShowLatestChangePlaceholder(t *testing.T) {
 	out := renderTable([]Row{
 		{
-			Position:    Position{Code: "000001", Name: "测试基金", Share: 100},
-			Quote:       valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true, DWJZ: 1.01, HasDWJZ: true, ZZL: 1, HasZZL: true},
-			TodayProfit: 2,
-			HasProfit:   true,
+			Position:                Position{Code: "000001", Name: "测试基金", Share: 100},
+			Quote:                   valuation.Quote{GSZ: 1.02, HasGSZ: true, GSZZL: 2, HasGSZZL: true, DWJZ: 1.01, HasDWJZ: true, ZZL: 1, HasZZL: true},
+			EstimatedTodayProfit:    2,
+			HasEstimatedTodayProfit: true,
 		},
 	})
 
@@ -201,6 +201,9 @@ func TestRenderTableHeaderAlignsWithRows(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) < 5 {
 		t.Fatalf("rendered table should include header, separators, row, and summary:\n%s", out)
+	}
+	if !strings.Contains(lines[0], "估算收益") || strings.Contains(lines[0], "当日收益") {
+		t.Fatalf("header should use estimated profit label:\n%s", out)
 	}
 
 	headerStart := strings.Index(lines[0], "基金名称/代码")
@@ -741,7 +744,7 @@ func TestLoadRowsSnapshotUsesCachedQuoteWithoutWaitingForRefresh(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	store := fundcache.NewFileCache(dir, func() time.Time { return now })
-	if err := store.Set("portfolio_data", testRealData()); err != nil {
+	if err := store.Set("portfolio_data", testPortfolioData()); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Set("fund_quote/000001", valuation.Quote{Code: "000001", GSZZL: 2.5, HasGSZZL: true, GSZ: 1.025, HasGSZ: true}); err != nil {
@@ -981,7 +984,7 @@ func TestCtrlCQuits(t *testing.T) {
 	}
 }
 
-func testRealData() map[string]any {
+func testPortfolioData() map[string]any {
 	return map[string]any{
 		"funds": []any{
 			map[string]any{"code": "000001", "name": "华夏成长"},

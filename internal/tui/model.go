@@ -23,10 +23,10 @@ type Position struct {
 
 type Row struct {
 	Position
-	Quote       valuation.Quote
-	QuoteErr    error
-	TodayProfit float64
-	HasProfit   bool
+	Quote                   valuation.Quote
+	QuoteErr                error
+	EstimatedTodayProfit    float64
+	HasEstimatedTodayProfit bool
 }
 
 func BuildPositions(data map[string]any) []Position {
@@ -80,7 +80,7 @@ func BuildPositions(data map[string]any) []Position {
 	return out
 }
 
-func TodayProfit(pos Position, quote valuation.Quote) (float64, bool) {
+func EstimatedTodayProfit(pos Position, quote valuation.Quote) (float64, bool) {
 	if pos.Share <= 0 {
 		return 0, false
 	}
@@ -105,13 +105,13 @@ func BuildRows(positions []Position, quotes map[string]valuation.Quote, errs map
 		if pos.Name == "" {
 			pos.Name = q.Name
 		}
-		profit, ok := TodayProfit(pos, q)
+		profit, ok := EstimatedTodayProfit(pos, q)
 		rows = append(rows, Row{
-			Position:    pos,
-			Quote:       q,
-			QuoteErr:    errs[pos.Code],
-			TodayProfit: profit,
-			HasProfit:   ok,
+			Position:                pos,
+			Quote:                   q,
+			QuoteErr:                errs[pos.Code],
+			EstimatedTodayProfit:    profit,
+			HasEstimatedTodayProfit: ok,
 		})
 	}
 	return rows

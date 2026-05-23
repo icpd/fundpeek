@@ -105,7 +105,7 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 	out := captureStdout(t, printUsage)
 
 	for _, want := range []string{
-		"fundpeek - 基金持仓 TUI 和可选估基宝同步工具",
+		"fundpeek - 基金持仓 TUI 和可选基估宝同步工具",
 		"Commands:",
 		"auth <source>",
 		"登录数据源",
@@ -113,6 +113,7 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"打开基金估值和持仓 TUI",
 		"json",
 		"输出基金持仓和行情 JSON",
+		"刷新本地持仓数据",
 		"push real",
 		"Sources:",
 		"real",

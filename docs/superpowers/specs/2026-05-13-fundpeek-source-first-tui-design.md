@@ -1,8 +1,8 @@
-# fundpeek 主定位调整：来源驱动的基金 TUI，估基宝作为可选 GUI 同步目标
+# fundpeek 主定位调整：来源驱动的基金 TUI，基估宝作为可选 GUI 同步目标
 
 ## Summary
 
-把 `fundpeek` 的主路径从“把数据同步到估基宝”改成“从养基宝/小倍养基获取持仓，本地 TUI 查看估值”。估基宝只作为可选 GUI 面板目标，通过 `fundpeek push real` 显式推送。
+把 `fundpeek` 的主路径从“把数据同步到基估宝”改成“从养基宝/小倍养基获取持仓，本地 TUI 查看估值”。基估宝只作为可选 GUI 面板目标，通过 `fundpeek push real` 显式推送。
 
 这会改动 CLI、应用层数据流、TUI 刷新、文档和测试，预计超过 8 个文件；不引入新服务、新依赖或新运行时。
 
@@ -12,7 +12,7 @@
 养基宝/小倍养基 -> sync -> 本地 portfolio_data -> tui
                                       |
                                       v
-                                  push real -> 估基宝
+                                  push real -> 基估宝
 ```
 
 ## Key Changes
@@ -20,10 +20,10 @@
 - `fundpeek sync [source]` 改成本地持仓刷新：
   - `fundpeek sync` 默认等同 `sync all`。
   - 支持 `sync yjb|xb|all`。
-  - 不再写入估基宝。
+  - 不再写入基估宝。
   - 成功后更新本地 `portfolio_data` 快照。
 - 新增 `fundpeek push real`：
-  - 读取本地 `portfolio_data`，推送到估基宝云端配置。
+  - 读取本地 `portfolio_data`，推送到基估宝云端配置。
   - 需要 `auth real`。
   - 保留 real 现有冲突检测。
   - 不做备份。
@@ -94,7 +94,7 @@
 
 ## Assumptions
 
-- 本地 portfolio 的内部结构继续兼容估基宝 data schema，这样 `push real` 不需要新转换层。
+- 本地 portfolio 的内部结构继续兼容基估宝 data schema，这样 `push real` 不需要新转换层。
 - 删除备份是有意破坏性变更；推送安全依赖 real 现有冲突检测和空数据拒绝策略。
-- `push real` 只处理 fundpeek 导入分组，保留估基宝中非导入/手动分组。
+- `push real` 只处理 fundpeek 导入分组，保留基估宝中非导入/手动分组。
 - 不新增 GUI、本地 Web 面板或新的数据文件 schema。

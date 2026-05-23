@@ -206,7 +206,7 @@ func prompt(reader *bufio.Reader, label string) string {
 }
 
 func printUsage() {
-	fmt.Println(`fundpeek - 基金持仓 TUI 和可选估基宝同步工具
+	fmt.Println(`fundpeek - 基金持仓 TUI 和可选基估宝同步工具
 
 Usage:
   fundpeek <command> [arguments]
@@ -216,8 +216,8 @@ Commands:
   status                        查看各数据源登录状态
   tui                           打开基金估值和持仓 TUI
   json                          输出基金持仓和行情 JSON
-  sync [source]                 刷新本地 TUI 持仓数据，可选 yjb、xb、all，默认 all
-  push real                     将本地持仓数据同步到估基宝
+  sync [source]                 刷新本地持仓数据，可选 yjb、xb、all，默认 all
+  push real                     将本地持仓数据同步到基估宝
   logout <source>               退出指定数据源登录
   help                          显示帮助信息
 

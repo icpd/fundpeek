@@ -47,8 +47,8 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 				JZRQ:     "2026-05-18",
 				GZTime:   "2026-05-19 14:30",
 			},
-			TodayProfit: 2,
-			HasProfit:   true,
+			EstimatedTodayProfit:    2,
+			HasEstimatedTodayProfit: true,
 		},
 		{
 			Position: tui.Position{Code: "000002", Name: "失败基金", Share: 50},
@@ -66,7 +66,7 @@ func TestBuildDocumentIncludesSummaryFundsAndErrors(t *testing.T) {
 		t.Fatalf("fund count = %d, want 2", doc.Summary.FundCount)
 	}
 	if !doc.Summary.EstimatedTodayProfitAmount.Available || doc.Summary.EstimatedTodayProfitAmount.Value != 2 {
-		t.Fatalf("today profit summary = %#v, want available value 2", doc.Summary.EstimatedTodayProfitAmount)
+		t.Fatalf("estimated today profit summary = %#v, want available value 2", doc.Summary.EstimatedTodayProfitAmount)
 	}
 	if !doc.Summary.EstimatedChangePercent.Available || math.Abs(doc.Summary.EstimatedChangePercent.Value-2) > 0.000001 {
 		t.Fatalf("estimated change summary = %#v, want available value 2", doc.Summary.EstimatedChangePercent)
@@ -164,8 +164,8 @@ func TestWriteRefreshesQuotesAndEncodesDocument(t *testing.T) {
 				GSZZL:    2,
 				HasGSZZL: true,
 			},
-			TodayProfit: 2,
-			HasProfit:   true,
+			EstimatedTodayProfit:    2,
+			HasEstimatedTodayProfit: true,
 		}}, nil
 	}
 	dir := t.TempDir()
