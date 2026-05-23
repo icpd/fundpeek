@@ -23,10 +23,11 @@ Tests are colocated with implementation files as `*_test.go`. The build output i
 - `make test`: runs `go test ./...` with a repo-local Go cache.
 - `make vet`: runs `go vet ./...`.
 - `make build`: builds `./fundpeek` from `./cmd/fundpeek`.
+- `go install ./cmd/fundpeek`: installs the current checkout to `$GOBIN` or `$GOPATH/bin`; only run this when the user explicitly asks to update the PATH-installed `fundpeek` command.
 - `make verify`: runs test, vet, and build; use this before submitting changes.
 - `go run ./cmd/fundpeek --help`: prints CLI usage without creating a binary.
 
-Common runtime commands include `./fundpeek status`, `./fundpeek tui`, `./fundpeek json`, `./fundpeek sync [yjb|xb|all]`, `./fundpeek push real`, `./fundpeek auth real|yjb|xb`, and `./fundpeek logout real|yjb|xb`. Source aliases are accepted by command parsing: `real/r`, `yangjibao/yjb/yj`, `xiaobei/xb/xbyj`, and `all/a` for sync.
+Common runtime commands include `./fundpeek status`, `./fundpeek tui`, `./fundpeek json`, `./fundpeek sync [yjb|xb|all]`, `./fundpeek push real`, `./fundpeek auth real|yjb|xb`, and `./fundpeek logout real|yjb|xb`. `make build` only updates the repo-local `./fundpeek`; use `./fundpeek` for normal CLI validation and do not run `go install` just to test changes. Source aliases are accepted by command parsing: `real/r`, `yangjibao/yjb/yj`, `xiaobei/xb/xbyj`, and `all/a` for sync.
 
 ## Product and Data Flow Constraints
 
