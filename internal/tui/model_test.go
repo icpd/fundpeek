@@ -2,10 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +17,7 @@ import (
 	"github.com/icpd/fundpeek/internal/config"
 	fundmodel "github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/valuation"
+	"github.com/muesli/termenv"
 )
 
 func TestBuildPositionsAggregatesImportedGroupHoldingsOnly(t *testing.T) {
@@ -358,6 +362,130 @@ func TestRenderTableKeepsShortFundNameWithCode(t *testing.T) {
 
 	if !strings.Contains(out, "华夏成长 #000001") {
 		t.Fatalf("rendered table should keep short fund label:\n%s", out)
+	}
+}
+
+func TestTUIRenderUsesSingleForegroundColor(t *testing.T) {
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(oldProfile)
+	})
+
+	lastRefresh := time.Date(2026, 5, 12, 15, 4, 5, 0, time.Local)
+	listRows := []Row{
+		{
+			Position: Position{Code: "000001", Name: "华夏成长", Share: 100},
+			Quote: valuation.Quote{
+				GSZ:      1.01,
+				HasGSZ:   true,
+				GSZZL:    1.23,
+				HasGSZZL: true,
+				DWJZ:     1.00,
+				HasDWJZ:  true,
+				ZZL:      -0.45,
+				HasZZL:   true,
+			},
+			EstimatedTodayProfit:    -12.34,
+			HasEstimatedTodayProfit: true,
+			QuoteErr:                errors.New("quote failed"),
+		},
+	}
+	detailStateWithRows := detailState{
+		Fund:        Position{Code: "000001", Name: "华夏成长"},
+		ErrText:     "详情刷新失败",
+		LastRefresh: lastRefresh,
+		Data: DetailData{
+			ReportDate: "2026-03-31",
+			Rows: []StockHoldingRow{
+				{
+					Holding: valuation.StockHolding{Code: "600519", Name: "贵州茅台", Weight: 9.87, HasWeight: true, Shares: 12300, HasShares: true, MarketValue: 1820.5, HasMarketValue: true},
+					Quote:   valuation.StockQuote{ChangePercent: 2.34, HasChangePercent: true, Price: 1820.5, HasPrice: true},
+				},
+				{
+					Holding:  valuation.StockHolding{Code: "00700.HK", Name: "腾讯控股"},
+					QuoteErr: true,
+				},
+			},
+			PartialQuoteErr: true,
+		},
+	}
+
+	cases := []struct {
+		name      string
+		output    string
+		fragments []string
+	}{
+		{
+			name: "list",
+			output: model{
+				rows:        listRows,
+				cursor:      0,
+				errText:     "部分行情失败",
+				lastRefresh: lastRefresh,
+				width:       98,
+			}.View(),
+			fragments: []string{
+				"fundpeek tui",
+				"↑/↓ select",
+				"部分行情失败",
+				"基金名称/代码",
+				"华夏成长 #000001",
+				"+1.23%",
+				"-0.45%",
+				"-12.34",
+				"!",
+			},
+		},
+		{
+			name:      "detail",
+			output:    renderDetail(detailStateWithRows),
+			fragments: []string{"华夏成长 #000001", "Esc back", "详情刷新失败", "行情不完整", "股票名称/代码", "贵州茅台 #600519", "+2.34%", "腾讯控股 #00700.HK", "!"},
+		},
+		{
+			name:      "list loading",
+			output:    model{loading: true, lastRefresh: lastRefresh}.View(),
+			fragments: []string{"fundpeek tui", "↑/↓ select", "正在加载基金持仓和实时估值..."},
+		},
+		{
+			name:      "list empty",
+			output:    model{lastRefresh: lastRefresh}.View(),
+			fragments: []string{"fundpeek tui", "没有找到 fundpeek 导入分组下的基金持仓。", "先执行 fundpeek sync"},
+		},
+		{
+			name: "detail loading",
+			output: renderDetail(detailState{
+				Fund:        Position{Code: "000001", Name: "华夏成长"},
+				Loading:     true,
+				LastRefresh: lastRefresh,
+			}),
+			fragments: []string{"华夏成长 #000001", "Esc back", "正在加载持仓明细和实时行情..."},
+		},
+		{
+			name: "detail empty",
+			output: renderDetail(detailState{
+				Fund:        Position{Code: "000001", Name: "华夏成长"},
+				LastRefresh: lastRefresh,
+			}),
+			fragments: []string{"华夏成长 #000001", "Esc back", "没有找到可展示的股票持仓。"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			colors := ansiForegroundColors(tc.output)
+			if len(colors) == 0 {
+				t.Fatalf("rendered output should include foreground color escapes:\n%q", tc.output)
+			}
+			for _, color := range colors {
+				if color != "244" {
+					t.Fatalf("foreground color = %q, want only 244:\n%q", color, tc.output)
+				}
+			}
+			for _, fragment := range tc.fragments {
+				assertFragmentForeground(t, tc.output, fragment, "244")
+			}
+		})
 	}
 }
 
@@ -1040,4 +1168,158 @@ func TestRenderDetailShowsHoldingsAndPartialQuoteFailure(t *testing.T) {
 			t.Fatalf("renderDetail contains signed holding weight %q:\n%s", unwanted, out)
 		}
 	}
+}
+
+func ansiForegroundColors(text string) []string {
+	var colors []string
+	for i := 0; i < len(text); i++ {
+		params, next, ok := readSGR(text, i)
+		if !ok {
+			continue
+		}
+		colors = append(colors, foregroundColorsFromSGR(params)...)
+		i = next - 1
+	}
+	return colors
+}
+
+type styledRune struct {
+	r  rune
+	fg string
+}
+
+func assertFragmentForeground(t *testing.T, output string, fragment string, want string) {
+	t.Helper()
+
+	runes := styledRunes(output)
+	fragmentRunes := []rune(fragment)
+	for start := 0; start+len(fragmentRunes) <= len(runes); start++ {
+		matches := true
+		for i, r := range fragmentRunes {
+			if runes[start+i].r != r {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		for i, r := range fragmentRunes {
+			if r == ' ' || r == '\t' || r == '\n' {
+				continue
+			}
+			if got := runes[start+i].fg; got != want {
+				t.Fatalf("fragment %q foreground at rune %q = %q, want %q:\n%q", fragment, r, got, want, output)
+			}
+		}
+		return
+	}
+	t.Fatalf("fragment %q not found:\n%q", fragment, output)
+}
+
+func styledRunes(text string) []styledRune {
+	var runes []styledRune
+	foreground := ""
+	for i := 0; i < len(text); {
+		if params, next, ok := readSGR(text, i); ok {
+			foreground = applySGRForeground(foreground, params)
+			i = next
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		runes = append(runes, styledRune{r: r, fg: foreground})
+		i += size
+	}
+	return runes
+}
+
+func readSGR(text string, start int) (params string, next int, ok bool) {
+	if start+2 >= len(text) || text[start] != '\x1b' || text[start+1] != '[' {
+		return "", start, false
+	}
+	end := strings.IndexByte(text[start+2:], 'm')
+	if end < 0 {
+		return "", start, false
+	}
+	params = text[start+2 : start+2+end]
+	next = start + 2 + end + 1
+	return params, next, true
+}
+
+func foregroundColorsFromSGR(params string) []string {
+	var colors []string
+	parts := sgrParts(params)
+	for i := 0; i < len(parts); i++ {
+		param := parts[i]
+		if param == "38" && i+1 < len(parts) {
+			switch parts[i+1] {
+			case "5":
+				if i+2 < len(parts) {
+					colors = append(colors, parts[i+2])
+					i += 2
+				}
+			case "2":
+				if i+4 < len(parts) {
+					colors = append(colors, strings.Join(parts[i:i+5], ";"))
+					i += 4
+				}
+			}
+			continue
+		}
+		if isANSIForegroundParam(param) {
+			colors = append(colors, param)
+		}
+	}
+	return colors
+}
+
+func applySGRForeground(current string, params string) string {
+	foreground := current
+	parts := sgrParts(params)
+	for i := 0; i < len(parts); i++ {
+		param := parts[i]
+		switch param {
+		case "0", "39":
+			foreground = ""
+		case "38":
+			if i+1 >= len(parts) {
+				continue
+			}
+			switch parts[i+1] {
+			case "5":
+				if i+2 < len(parts) {
+					foreground = parts[i+2]
+					i += 2
+				}
+			case "2":
+				if i+4 < len(parts) {
+					foreground = strings.Join(parts[i:i+5], ";")
+					i += 4
+				}
+			}
+		default:
+			if isANSIForegroundParam(param) {
+				foreground = param
+			}
+		}
+	}
+	return foreground
+}
+
+func sgrParts(params string) []string {
+	if params == "" {
+		return []string{"0"}
+	}
+	return strings.Split(params, ";")
+}
+
+func isANSIForegroundParam(param string) bool {
+	n, err := strconv.Atoi(param)
+	if err != nil {
+		return false
+	}
+	return (n >= 30 && n <= 37) || (n >= 90 && n <= 97)
 }

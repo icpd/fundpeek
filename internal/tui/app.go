@@ -98,12 +98,12 @@ type StockHoldingRow struct {
 }
 
 var (
-	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
-	tuiHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
-	tuiErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("95"))
-	tuiHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("242"))
-	tuiUpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	tuiDownStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	tuiForegroundColor = lipgloss.Color("244")
+	tuiTextStyle       = lipgloss.NewStyle().Foreground(tuiForegroundColor)
+	tuiTitleStyle      = tuiTextStyle.Bold(true)
+	tuiHelpStyle       = tuiTextStyle
+	tuiErrStyle        = tuiTextStyle
+	tuiHeaderStyle     = tuiTextStyle.Bold(true)
 )
 
 func Run(ctx context.Context, a *fundapp.App) error {
@@ -276,9 +276,11 @@ func (m model) View() string {
 	}
 	if len(m.rows) == 0 {
 		if m.loading {
-			b.WriteString("正在加载基金持仓和实时估值...\n")
+			b.WriteString(tuiTextStyle.Render("正在加载基金持仓和实时估值..."))
+			b.WriteString("\n")
 		} else {
-			b.WriteString("没有找到 fundpeek 导入分组下的基金持仓。\n")
+			b.WriteString(tuiTextStyle.Render("没有找到 fundpeek 导入分组下的基金持仓。"))
+			b.WriteString("\n")
 			b.WriteString(tuiHelpStyle.Render("先执行 fundpeek sync yjb / fundpeek sync xb / fundpeek sync all。"))
 			b.WriteString("\n")
 		}
@@ -657,25 +659,28 @@ func renderTableWithCursorAt(rows []Row, cursor int, width int, now time.Time) s
 		if i == cursor {
 			prefix = "> "
 		}
-		b.WriteString(prefix)
-		b.WriteString(cell(fundLabel(row, fundWidth), fundWidth, lipgloss.Left))
-		b.WriteString(cell(formatPercent(row.Quote.GSZZL, row.Quote.HasGSZZL), estWidth, lipgloss.Right))
-		b.WriteString(cell(formatLatestPercent(row.Quote, now), latestWidth, lipgloss.Right))
-		b.WriteString(cell(formatMoney(row.EstimatedTodayProfit, row.HasEstimatedTodayProfit), profitWidth, lipgloss.Right))
+		var rowText strings.Builder
+		rowText.WriteString(prefix)
+		rowText.WriteString(cell(fundLabel(row, fundWidth), fundWidth, lipgloss.Left))
+		rowText.WriteString(cell(formatPercent(row.Quote.GSZZL, row.Quote.HasGSZZL), estWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatLatestPercent(row.Quote, now), latestWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatMoney(row.EstimatedTodayProfit, row.HasEstimatedTodayProfit), profitWidth, lipgloss.Right))
 		if row.QuoteErr != nil {
-			b.WriteString(" ")
-			b.WriteString(tuiErrStyle.Render("!"))
+			rowText.WriteString(" !")
 		}
+		b.WriteString(tuiTextStyle.Render(rowText.String()))
 		b.WriteString("\n")
 	}
 	total := summarizeRows(rows)
 	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", tableWidth)))
 	b.WriteString("\n")
-	b.WriteString("  ")
-	b.WriteString(cell("汇总", fundWidth, lipgloss.Left))
-	b.WriteString(cell(formatPercent(total.EstimatedChange, total.HasEstimatedChange), estWidth, lipgloss.Right))
-	b.WriteString(cell(formatPercent(total.LatestChange, total.HasLatestChange), latestWidth, lipgloss.Right))
-	b.WriteString(cell(formatMoney(total.EstimatedTodayProfit, total.HasEstimatedTodayProfit), profitWidth, lipgloss.Right))
+	var totalText strings.Builder
+	totalText.WriteString("  ")
+	totalText.WriteString(cell("汇总", fundWidth, lipgloss.Left))
+	totalText.WriteString(cell(formatPercent(total.EstimatedChange, total.HasEstimatedChange), estWidth, lipgloss.Right))
+	totalText.WriteString(cell(formatPercent(total.LatestChange, total.HasLatestChange), latestWidth, lipgloss.Right))
+	totalText.WriteString(cell(formatMoney(total.EstimatedTodayProfit, total.HasEstimatedTodayProfit), profitWidth, lipgloss.Right))
+	b.WriteString(tuiTextStyle.Render(totalText.String()))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -686,7 +691,7 @@ func formatLatestPercent(quote valuation.Quote, now time.Time) string {
 	}
 	text := formatPercent(quote.ZZL, quote.HasZZL)
 	if quote.JZRQ == now.Format("2006-01-02") {
-		return tuiHelpStyle.Render("✓ ") + text
+		return "✓ " + text
 	}
 	return text
 }
@@ -747,11 +752,14 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 	}
 	if len(state.Data.Rows) == 0 {
 		if state.Loading {
-			b.WriteString("正在加载持仓明细和实时行情...\n")
+			b.WriteString(tuiTextStyle.Render("正在加载持仓明细和实时行情..."))
+			b.WriteString("\n")
 		} else if state.Data.ReportDate != "" && !state.Data.IsRecent {
-			b.WriteString("最新持仓报告期已超过 6 个月，未展示过期持仓。\n")
+			b.WriteString(tuiTextStyle.Render("最新持仓报告期已超过 6 个月，未展示过期持仓。"))
+			b.WriteString("\n")
 		} else {
-			b.WriteString("没有找到可展示的股票持仓。\n")
+			b.WriteString(tuiTextStyle.Render("没有找到可展示的股票持仓。"))
+			b.WriteString("\n")
 		}
 		return b.String()
 	}
@@ -768,16 +776,17 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 	b.WriteString(tuiHelpStyle.Render(strings.Repeat("─", stockWidth+chgWidth+priceWidth+weightWidth+sharesWidth+valueWidth)))
 	b.WriteString("\n")
 	for _, row := range state.Data.Rows {
-		b.WriteString(cell(stockLabel(row), stockWidth, lipgloss.Left))
-		b.WriteString(cell(formatPercent(row.Quote.ChangePercent, row.Quote.HasChangePercent), chgWidth, lipgloss.Right))
-		b.WriteString(cell(formatNumber(row.Quote.Price, row.Quote.HasPrice), priceWidth, lipgloss.Right))
-		b.WriteString(cell(formatUnsignedPercent(row.Holding.Weight, row.Holding.HasWeight), weightWidth, lipgloss.Right))
-		b.WriteString(cell(formatNumber(row.Holding.Shares, row.Holding.HasShares), sharesWidth, lipgloss.Right))
-		b.WriteString(cell(formatNumber(row.Holding.MarketValue, row.Holding.HasMarketValue), valueWidth, lipgloss.Right))
+		var rowText strings.Builder
+		rowText.WriteString(cell(stockLabel(row), stockWidth, lipgloss.Left))
+		rowText.WriteString(cell(formatPercent(row.Quote.ChangePercent, row.Quote.HasChangePercent), chgWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatNumber(row.Quote.Price, row.Quote.HasPrice), priceWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatUnsignedPercent(row.Holding.Weight, row.Holding.HasWeight), weightWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatNumber(row.Holding.Shares, row.Holding.HasShares), sharesWidth, lipgloss.Right))
+		rowText.WriteString(cell(formatNumber(row.Holding.MarketValue, row.Holding.HasMarketValue), valueWidth, lipgloss.Right))
 		if row.QuoteErr {
-			b.WriteString(" ")
-			b.WriteString(tuiErrStyle.Render("!"))
+			rowText.WriteString(" !")
 		}
+		b.WriteString(tuiTextStyle.Render(rowText.String()))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -786,7 +795,7 @@ func renderDetailWithSpinner(state detailState, spinnerView string) string {
 const statusLeftWidth = 19
 
 func newStatusSpinner() spinner.Model {
-	return spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(tuiHelpStyle))
+	return spinner.New(spinner.WithSpinner(spinner.MiniDot))
 }
 
 func renderStatusBar(loading bool, hasError bool, lastRefresh time.Time, help string, spinnerView string) string {
@@ -920,14 +929,7 @@ func formatPercent(value float64, ok bool) string {
 	if !ok {
 		return "--"
 	}
-	text := fmt.Sprintf("%+.2f%%", value)
-	if value > 0 {
-		return tuiUpStyle.Render(text)
-	}
-	if value < 0 {
-		return tuiDownStyle.Render(text)
-	}
-	return text
+	return fmt.Sprintf("%+.2f%%", value)
 }
 
 func formatUnsignedPercent(value float64, ok bool) string {
@@ -941,14 +943,7 @@ func formatMoney(value float64, ok bool) string {
 	if !ok {
 		return "--"
 	}
-	text := fmt.Sprintf("%+.2f", value)
-	if value > 0 {
-		return tuiUpStyle.Render(text)
-	}
-	if value < 0 {
-		return tuiDownStyle.Render(text)
-	}
-	return text
+	return fmt.Sprintf("%+.2f", value)
 }
 
 func formatNumber(value float64, ok bool) string {
