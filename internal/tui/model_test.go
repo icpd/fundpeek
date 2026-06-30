@@ -332,6 +332,18 @@ func TestRenderWatchDetailShowsMinuteChart(t *testing.T) {
 	}
 }
 
+func TestRenderWatchDetailUsesPreviousCloseAsMinuteBaseline(t *testing.T) {
+	out := renderWatchDetail(WatchRow{
+		Item:   watchlist.Item{Code: "600519", Name: "贵州茅台", Market: "sh"},
+		Quote:  valuation.StockQuote{ChangePercent: -9.5, HasChangePercent: true, Price: 90.5, HasPrice: true},
+		Minute: valuation.StockMinute{Date: "20260630", Points: []valuation.StockMinutePoint{{Time: "0930", Price: 90.0}, {Time: "0931", Price: 91.0}, {Time: "0932", Price: 90.5}}},
+	}, 80)
+
+	if !strings.Contains(out, " 100.00 │") {
+		t.Fatalf("watch detail should use previous close as minute baseline:\n%s", out)
+	}
+}
+
 func TestWatchChartWidthCapsWideTerminals(t *testing.T) {
 	if got := watchChartWidth(140); got != 88 {
 		t.Fatalf("watchChartWidth(140) = %d, want 88", got)

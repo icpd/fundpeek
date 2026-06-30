@@ -276,7 +276,8 @@ func renderWatchDetail(row WatchRow, width int) string {
 		b.WriteString(tuiErrStyle.Render(row.MinuteErr.Error()))
 		b.WriteString("\n\n")
 	}
-	chart := MinuteChart(row.Minute.Points, watchChartWidth(width), 8)
+	baseline, hasBaseline := previousCloseFromQuote(row.Quote)
+	chart := MinuteChartWithBaseline(row.Minute.Points, baseline, hasBaseline, watchChartWidth(width), 8)
 	if chart == "" {
 		b.WriteString(tuiTextStyle.Render("暂无分时数据。"))
 		b.WriteString("\n")
@@ -288,6 +289,10 @@ func renderWatchDetail(row WatchRow, width int) string {
 }
 
 func MinuteChart(points []valuation.StockMinutePoint, width int, height int) string {
+	return MinuteChartWithBaseline(points, 0, false, width, height)
+}
+
+func MinuteChartWithBaseline(points []valuation.StockMinutePoint, baseline float64, hasBaseline bool, width int, height int) string {
 	if width < 12 || height < 3 {
 		return ""
 	}
@@ -305,6 +310,10 @@ func MinuteChart(points []valuation.StockMinutePoint, width int, height int) str
 		return ""
 	}
 	minV, maxV := values[0], values[0]
+	if !hasBaseline || baseline <= 0 {
+		baseline = values[0]
+		hasBaseline = true
+	}
 	for _, value := range values {
 		if value < minV {
 			minV = value
@@ -313,10 +322,17 @@ func MinuteChart(points []valuation.StockMinutePoint, width int, height int) str
 			maxV = value
 		}
 	}
+	if hasBaseline {
+		if baseline < minV {
+			minV = baseline
+		}
+		if baseline > maxV {
+			maxV = baseline
+		}
+	}
 	if maxV <= minV {
 		maxV = minV + 1
 	}
-	baseline := values[0]
 	waterlineY := chartY(baseline, minV, maxV, height)
 	plot := brailleLineChart(values, plotWidth, height, minV, maxV, baseline)
 	labelWidth := chartLabelWidth(maxV, minV, baseline)
@@ -341,6 +357,14 @@ func MinuteChart(points []valuation.StockMinutePoint, width int, height int) str
 	b.WriteString(strings.Repeat(" ", labelWidth+2))
 	b.WriteString(minuteChartXLabels(points, plotWidth))
 	return b.String()
+}
+
+func previousCloseFromQuote(quote valuation.StockQuote) (float64, bool) {
+	if !quote.HasPrice || !quote.HasChangePercent || quote.ChangePercent <= -100 {
+		return 0, false
+	}
+	previousClose := quote.Price / (1 + quote.ChangePercent/100)
+	return previousClose, previousClose > 0
 }
 
 func chartLabelWidth(values ...float64) int {
