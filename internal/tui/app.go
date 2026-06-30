@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	fundapp "github.com/icpd/fundpeek/internal/app"
 	"github.com/icpd/fundpeek/internal/valuation"
+	"github.com/icpd/fundpeek/internal/watchlist"
 )
 
 const refreshEvery = 30 * time.Second
@@ -33,6 +35,9 @@ type model struct {
 
 	page   page
 	detail detailState
+
+	listMode listMode
+	watch    watchState
 }
 
 type loadedMsg struct {
@@ -57,6 +62,27 @@ type detailSnapshotMsg struct {
 	err  error
 }
 
+type watchLoadedMsg struct {
+	rows []WatchRow
+	errs map[string]error
+	err  error
+}
+
+type watchAddCandidatesMsg struct {
+	items []watchlist.Item
+	err   error
+}
+
+type watchAddedMsg struct {
+	item watchlist.Item
+	err  error
+}
+
+type watchRemovedMsg struct {
+	code string
+	err  error
+}
+
 type tickMsg time.Time
 
 type page int
@@ -64,6 +90,14 @@ type page int
 const (
 	pageList page = iota
 	pageDetail
+	pageWatchDetail
+)
+
+type listMode int
+
+const (
+	listFunds listMode = iota
+	listWatch
 )
 
 type summary struct {
@@ -97,6 +131,20 @@ type StockHoldingRow struct {
 	QuoteErr bool
 }
 
+type watchState struct {
+	Rows            []WatchRow
+	Cursor          int
+	SelectedCode    string
+	Loading         bool
+	ErrText         string
+	LastRefresh     time.Time
+	Adding          bool
+	Input           textinput.Model
+	Candidates      []watchlist.Item
+	CandidateCursor int
+	Detail          *WatchRow
+}
+
 var (
 	tuiForegroundColor = lipgloss.Color("244")
 	tuiTextStyle       = lipgloss.NewStyle().Foreground(tuiForegroundColor)
@@ -107,46 +155,84 @@ var (
 )
 
 func Run(ctx context.Context, a *fundapp.App) error {
-	m := model{ctx: ctx, app: a, loading: true, spinner: newStatusSpinner()}
+	m := model{ctx: ctx, app: a, loading: true, spinner: newStatusSpinner(), watch: newWatchState()}
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 	return err
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.load(), tick(), m.spinnerTickCmd())
+	if m.watch.Input.Prompt == "" {
+		m.watch = newWatchState()
+	}
+	return tea.Batch(m.load(), m.loadWatch(), tick(), m.spinnerTickCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if !m.loading && (m.page != pageDetail || !m.detail.Loading) {
+		if !m.loading && !m.watch.Loading && (m.page != pageDetail || !m.detail.Loading) {
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.statusSpinner().Update(msg)
 		return m, cmd
 	case tea.KeyMsg:
+		if m.watch.Adding && m.page == pageList && m.listMode == listWatch {
+			return m.updateWatchAdd(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "tab":
+			if m.page == pageList {
+				m.toggleListMode()
+			}
 		case "left", "backspace", "esc":
 			if m.page == pageDetail {
+				m.page = pageList
+				return m, nil
+			}
+			if m.page == pageWatchDetail {
 				m.page = pageList
 				return m, nil
 			}
 			return m, tea.Quit
 		case "up", "k":
 			if m.page == pageList {
-				m.moveCursor(-1)
+				if m.listMode == listWatch {
+					m.moveWatchCursor(-1)
+				} else {
+					m.moveCursor(-1)
+				}
 			}
 		case "down", "j":
 			if m.page == pageList {
-				m.moveCursor(1)
+				if m.listMode == listWatch {
+					m.moveWatchCursor(1)
+				} else {
+					m.moveCursor(1)
+				}
 			}
 		case "right", "enter":
-			if m.page == pageList && len(m.rows) > 0 {
+			if m.page == pageList && m.listMode == listFunds && len(m.rows) > 0 {
 				m.openDetail(m.rows[m.cursor].Position)
 				return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
+			}
+			if m.page == pageList && m.listMode == listWatch && len(m.watch.Rows) > 0 {
+				m.openWatchDetail(m.watch.Rows[m.watch.Cursor])
+				return m, nil
+			}
+		case "a":
+			if m.page == pageList && m.listMode == listWatch {
+				m.startWatchAdd()
+				return m, m.watch.Input.Focus()
+			}
+		case "d":
+			if m.page == pageList && m.listMode == listWatch && len(m.watch.Rows) > 0 && !m.watch.Loading {
+				row := m.watch.Rows[m.watch.Cursor]
+				m.watch.Loading = true
+				m.watch.ErrText = ""
+				return m, tea.Batch(m.removeWatch(row.Item), m.spinnerTickCmd())
 			}
 		case "r":
 			if m.page == pageDetail {
@@ -154,6 +240,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detail.Loading = true
 					m.detail.ErrText = ""
 					return m, tea.Batch(m.loadDetail(), m.spinnerTickCmd())
+				}
+				break
+			}
+			if m.listMode == listWatch {
+				if !m.watch.Loading {
+					m.watch.Loading = true
+					m.watch.ErrText = ""
+					return m, tea.Batch(m.loadWatch(), m.spinnerTickCmd())
 				}
 				break
 			}
@@ -178,6 +272,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				break
 			}
+			if m.listMode == listWatch {
+				if !m.watch.Loading {
+					for _, row := range m.watch.Rows {
+						m.app.InvalidateStockQuote(watchQuoteKey(row.Item))
+						m.app.InvalidateStockMinute(watchMinuteKey(row.Item))
+					}
+					m.watch.Loading = true
+					m.watch.ErrText = ""
+					return m, tea.Batch(m.loadWatch(), m.spinnerTickCmd())
+				}
+				break
+			}
 			if !m.loading {
 				for _, row := range m.rows {
 					m.app.InvalidateFundQuote(row.Code)
@@ -196,6 +302,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detail.Loading = true
 				m.detail.ErrText = ""
 				return m, tea.Batch(tick(), m.loadDetail(), m.spinnerTickCmd())
+			}
+			return m, tick()
+		}
+		if m.page == pageWatchDetail {
+			return m, tick()
+		}
+		if m.listMode == listWatch {
+			if !m.watch.Loading {
+				m.watch.Loading = true
+				m.watch.ErrText = ""
+				return m, tea.Batch(tick(), m.loadWatch(), m.spinnerTickCmd())
 			}
 			return m, tick()
 		}
@@ -249,6 +366,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.ErrText = ""
 		m.detail.Data = msg.data
 		m.detail.LastRefresh = time.Now()
+	case watchLoadedMsg:
+		m.watch.Loading = false
+		if msg.err != nil {
+			m.watch.ErrText = msg.err.Error()
+			break
+		}
+		m.watch.ErrText = firstErrText(msg.errs)
+		m.applyWatchRows(msg.rows)
+		m.watch.LastRefresh = time.Now()
+	case watchAddCandidatesMsg:
+		m.watch.Loading = false
+		if msg.err != nil {
+			m.watch.ErrText = msg.err.Error()
+			break
+		}
+		if len(msg.items) == 0 {
+			m.watch.ErrText = "没有匹配的 A 股"
+			break
+		}
+		if len(msg.items) == 1 {
+			m.watch.Loading = true
+			return m, tea.Batch(m.addWatch(msg.items[0]), m.spinnerTickCmd())
+		}
+		m.watch.Candidates = msg.items
+		m.watch.CandidateCursor = 0
+	case watchAddedMsg:
+		m.watch.Loading = false
+		if msg.err != nil {
+			m.watch.ErrText = msg.err.Error()
+			break
+		}
+		m.watch.Adding = false
+		m.watch.Candidates = nil
+		m.watch.Input.SetValue("")
+		m.watch.SelectedCode = msg.item.Code
+		m.watch.Loading = true
+		return m, tea.Batch(m.loadWatch(), m.spinnerTickCmd())
+	case watchRemovedMsg:
+		m.watch.Loading = false
+		if msg.err != nil {
+			m.watch.ErrText = msg.err.Error()
+			break
+		}
+		m.watch.SelectedCode = ""
+		m.watch.Loading = true
+		return m, tea.Batch(m.loadWatch(), m.spinnerTickCmd())
 	}
 	return m, nil
 }
@@ -256,6 +419,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.page == pageDetail {
 		return renderDetailWithSpinner(m.detail, m.statusSpinner().View())
+	}
+	if m.page == pageWatchDetail && m.watch.Detail != nil {
+		return renderWatchDetail(*m.watch.Detail, m.width)
+	}
+	if m.listMode == listWatch {
+		return renderWatchWithSpinner(m.watch, m.width, m.statusSpinner().View())
 	}
 	var b strings.Builder
 	b.WriteString(tuiTitleStyle.Render("fundpeek tui"))
@@ -265,7 +434,7 @@ func (m model) View() string {
 		m.loading,
 		m.errText != "",
 		m.lastRefresh,
-		"↑/↓ select  Enter detail  r refresh",
+		"Tab watch  ↑/↓ select  Enter detail  r refresh",
 		m.statusSpinner().View(),
 	)))
 	b.WriteString("\n\n")
@@ -344,6 +513,37 @@ func (m model) refreshDetail() tea.Cmd {
 	}
 }
 
+func (m model) loadWatch() tea.Cmd {
+	return func() tea.Msg {
+		rows, errs, err := LoadWatchRows(m.ctx, m.app)
+		return watchLoadedMsg{rows: rows, errs: errs, err: err}
+	}
+}
+
+func (m model) searchWatch(query string) tea.Cmd {
+	return func() tea.Msg {
+		items, err := m.app.SearchWatchlistCandidates(m.ctx, query)
+		return watchAddCandidatesMsg{items: items, err: err}
+	}
+}
+
+func (m model) addWatch(item watchlist.Item) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.app.AddWatchlistItem(item)
+		return watchAddedMsg{item: item, err: err}
+	}
+}
+
+func (m model) removeWatch(item watchlist.Item) tea.Cmd {
+	return func() tea.Msg {
+		_, removed, err := m.app.RemoveWatchlistItem(item.Market + item.Code)
+		if err == nil && !removed {
+			err = fmt.Errorf("stock %s is not in watchlist", item.Code)
+		}
+		return watchRemovedMsg{code: item.Code, err: err}
+	}
+}
+
 func (m *model) moveCursor(delta int) {
 	if len(m.rows) == 0 {
 		m.cursor = 0
@@ -381,9 +581,127 @@ func (m *model) applyLoadedRows(rows []Row) {
 	m.selectedCode = rows[m.cursor].Code
 }
 
+func (m *model) applyWatchRows(rows []WatchRow) {
+	m.watch.Rows = rows
+	if len(rows) == 0 {
+		m.watch.Cursor = 0
+		m.watch.SelectedCode = ""
+		return
+	}
+	code := m.watch.SelectedCode
+	if code == "" && m.watch.Cursor >= 0 && m.watch.Cursor < len(rows) {
+		code = rows[m.watch.Cursor].Item.Code
+	}
+	m.watch.Cursor = 0
+	for i, row := range rows {
+		if row.Item.Code == code {
+			m.watch.Cursor = i
+			break
+		}
+	}
+	m.watch.SelectedCode = rows[m.watch.Cursor].Item.Code
+	if m.page == pageWatchDetail && m.watch.Detail != nil {
+		for i := range rows {
+			if rows[i].Item.Code == m.watch.Detail.Item.Code && rows[i].Item.Market == m.watch.Detail.Item.Market {
+				m.watch.Detail = &rows[i]
+				return
+			}
+		}
+		m.page = pageList
+		m.watch.Detail = nil
+	}
+}
+
+func (m *model) moveWatchCursor(delta int) {
+	if len(m.watch.Rows) == 0 {
+		m.watch.Cursor = 0
+		m.watch.SelectedCode = ""
+		return
+	}
+	m.watch.Cursor += delta
+	if m.watch.Cursor < 0 {
+		m.watch.Cursor = len(m.watch.Rows) - 1
+	}
+	if m.watch.Cursor >= len(m.watch.Rows) {
+		m.watch.Cursor = 0
+	}
+	m.watch.SelectedCode = m.watch.Rows[m.watch.Cursor].Item.Code
+}
+
+func (m *model) toggleListMode() {
+	if m.listMode == listWatch {
+		m.listMode = listFunds
+		m.watch.Adding = false
+		m.watch.Candidates = nil
+		return
+	}
+	m.listMode = listWatch
+}
+
+func (m *model) startWatchAdd() {
+	m.watch.Adding = true
+	m.watch.ErrText = ""
+	m.watch.Candidates = nil
+	m.watch.CandidateCursor = 0
+	m.watch.Input.SetValue("")
+	m.watch.Input.Placeholder = "股票代码或名称"
+	m.watch.Input.Focus()
+}
+
+func (m model) updateWatchAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.watch.Adding = false
+		m.watch.Candidates = nil
+		m.watch.Input.SetValue("")
+		return m, nil
+	case "up", "k":
+		if len(m.watch.Candidates) > 0 {
+			m.watch.CandidateCursor--
+			if m.watch.CandidateCursor < 0 {
+				m.watch.CandidateCursor = len(m.watch.Candidates) - 1
+			}
+		}
+		return m, nil
+	case "down", "j":
+		if len(m.watch.Candidates) > 0 {
+			m.watch.CandidateCursor++
+			if m.watch.CandidateCursor >= len(m.watch.Candidates) {
+				m.watch.CandidateCursor = 0
+			}
+		}
+		return m, nil
+	case "enter":
+		if len(m.watch.Candidates) > 0 {
+			item := m.watch.Candidates[m.watch.CandidateCursor]
+			m.watch.Loading = true
+			m.watch.ErrText = ""
+			return m, tea.Batch(m.addWatch(item), m.spinnerTickCmd())
+		}
+		query := strings.TrimSpace(m.watch.Input.Value())
+		if query == "" {
+			m.watch.ErrText = "请输入股票代码或名称"
+			return m, nil
+		}
+		m.watch.Loading = true
+		m.watch.ErrText = ""
+		return m, tea.Batch(m.searchWatch(query), m.spinnerTickCmd())
+	}
+	var cmd tea.Cmd
+	m.watch.Input, cmd = m.watch.Input.Update(msg)
+	return m, cmd
+}
+
 func (m *model) openDetail(fund Position) {
 	m.page = pageDetail
 	m.detail = detailState{Fund: fund, Loading: true}
+}
+
+func (m *model) openWatchDetail(row WatchRow) {
+	m.page = pageWatchDetail
+	m.watch.Detail = &row
 }
 
 func (m *model) ensureStatusSpinner() {
@@ -418,11 +736,18 @@ type stockQuoteFetcher interface {
 	FetchTencentStockQuotes(context.Context, []string) (map[string]valuation.StockQuote, error)
 }
 
+type stockMinuteFetcher interface {
+	FetchStockMinute(context.Context, string) (valuation.StockMinute, error)
+}
+
 var (
 	newFundQuoteFetcher = func() fundQuoteFetcher {
 		return valuation.NewClient()
 	}
 	newStockQuoteFetcher = func() stockQuoteFetcher {
+		return valuation.NewClient()
+	}
+	newStockMinuteFetcher = func() stockMinuteFetcher {
 		return valuation.NewClient()
 	}
 )

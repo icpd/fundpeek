@@ -113,6 +113,8 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"打开基金估值和持仓 TUI",
 		"json",
 		"输出基金持仓和行情 JSON",
+		"watch <action>",
+		"管理自选股票",
 		"刷新本地持仓数据",
 		"push real",
 		"Sources:",
@@ -120,6 +122,7 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"yangjibao",
 		"Examples:",
 		"fundpeek sync",
+		"fundpeek watch add 600519",
 		"fundpeek json",
 		"fundpeek push real",
 		"fundpeek help sync",
@@ -160,6 +163,11 @@ func TestSubcommandHelpIncludesUsage(t *testing.T) {
 			name: "json",
 			args: []string{"json", "--help"},
 			want: []string{"fundpeek json - 输出基金持仓和行情 JSON", "Usage:", "fundpeek json", "errors 字段"},
+		},
+		{
+			name: "watch",
+			args: []string{"watch", "--help"},
+			want: []string{"fundpeek watch - 管理自选股票", "Usage:", "fundpeek watch add <code-or-name>", "watchlist.json"},
 		},
 		{
 			name: "sync",
@@ -256,6 +264,9 @@ func TestUnknownHelpTopicDoesNotCreateConfigFiles(t *testing.T) {
 func TestJSONIsKnownCommand(t *testing.T) {
 	if !isKnownCommand("json") {
 		t.Fatal("json should be a known command")
+	}
+	if !isKnownCommand("watch") {
+		t.Fatal("watch should be a known command")
 	}
 }
 

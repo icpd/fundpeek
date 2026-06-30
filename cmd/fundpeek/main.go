@@ -17,6 +17,7 @@ import (
 	"github.com/icpd/fundpeek/internal/jsonexport"
 	"github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/tui"
+	"github.com/icpd/fundpeek/internal/watchlist"
 )
 
 func main() {
@@ -82,6 +83,8 @@ func run() error {
 		return tui.Run(ctx, a)
 	case "json":
 		return jsonexport.Write(ctx, a, os.Stdout)
+	case "watch":
+		return runWatch(ctx, a, args[1:])
 	case "sync":
 		sourceArg := ""
 		if len(args) >= 2 {
@@ -167,7 +170,7 @@ func hasHelpArgument(args []string) bool {
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "auth", "status", "sync", "push", "logout", "tui", "json":
+	case "auth", "status", "sync", "push", "logout", "tui", "json", "watch":
 		return true
 	default:
 		return false
@@ -236,6 +239,81 @@ func runAuth(ctx context.Context, a *app.App, source string) error {
 	}
 }
 
+func runWatch(ctx context.Context, a *app.App, args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing watch action: list, add, remove")
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return errors.New("watch list does not accept arguments")
+		}
+		items, err := a.Watchlist()
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			fmt.Println("watchlist: empty")
+			return nil
+		}
+		for _, item := range items {
+			fmt.Printf("%s %s %s\n", item.Market, item.Code, item.Name)
+		}
+		return nil
+	case "add":
+		if len(args) < 2 {
+			return errors.New("missing stock code or name")
+		}
+		query := strings.Join(args[1:], " ")
+		candidates, err := a.SearchWatchlistCandidates(ctx, query)
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return fmt.Errorf("no A-share stock matched %q", query)
+		}
+		if len(candidates) > 1 {
+			printWatchCandidates(candidates)
+			return fmt.Errorf("multiple stocks matched %q; use a stock code", query)
+		}
+		if _, err := a.AddWatchlistItem(candidates[0]); err != nil {
+			return err
+		}
+		printWatchAdded(candidates[0])
+		return nil
+	case "remove", "rm":
+		if len(args) != 2 {
+			return errors.New("usage: fundpeek watch remove <code>")
+		}
+		_, removed, err := a.RemoveWatchlistItem(args[1])
+		if err != nil {
+			return err
+		}
+		if !removed {
+			return fmt.Errorf("stock %q is not in watchlist", args[1])
+		}
+		fmt.Println("watch removed:", args[1])
+		return nil
+	default:
+		return fmt.Errorf("unknown watch action %q", args[0])
+	}
+}
+
+func printWatchCandidates(items []watchlist.Item) {
+	fmt.Println("matched stocks:")
+	for _, item := range items {
+		fmt.Printf("  %s %s %s\n", item.Market, item.Code, item.Name)
+	}
+}
+
+func printWatchAdded(item watchlist.Item) {
+	label := strings.TrimSpace(item.Name)
+	if label == "" {
+		label = item.Code
+	}
+	fmt.Printf("watch added: %s %s %s\n", item.Market, item.Code, label)
+}
+
 func prompt(reader *bufio.Reader, label string) string {
 	fmt.Print(label)
 	text, _ := reader.ReadString('\n')
@@ -253,6 +331,7 @@ Commands:
   status                        查看各数据源登录状态
   tui                           打开基金估值和持仓 TUI
   json                          输出基金持仓和行情 JSON
+  watch <action>                管理自选股票，支持 list、add、remove
   sync [source]                 刷新本地持仓数据，可选 yjb、xb、all，默认 all
   push real                     将本地持仓数据同步到基估宝
   logout <source>               退出指定数据源登录
@@ -268,6 +347,7 @@ Examples:
   fundpeek auth yjb
   fundpeek sync
   fundpeek tui
+  fundpeek watch add 600519
   fundpeek json
   fundpeek push real
   fundpeek help sync`)
@@ -325,6 +405,24 @@ Notes:
 
 Examples:
   fundpeek json`)
+		return true
+	case "watch":
+		fmt.Println(`fundpeek watch - 管理自选股票
+
+Usage:
+  fundpeek watch list
+  fundpeek watch add <code-or-name>
+  fundpeek watch remove <code>
+
+Notes:
+  第一版优先支持 A 股。add 可输入代码或名称；名称匹配多只股票时会列出候选，请改用股票代码添加。
+  自选股票只保存在本地 watchlist.json，不会写入 portfolio 或基估宝远端配置。
+
+Examples:
+  fundpeek watch list
+  fundpeek watch add 600519
+  fundpeek watch add 贵州茅台
+  fundpeek watch remove 600519`)
 		return true
 	case "sync":
 		fmt.Println(`fundpeek sync - 刷新本地持仓数据

@@ -19,6 +19,7 @@ import (
 	"github.com/icpd/fundpeek/internal/sources/xiaobei"
 	"github.com/icpd/fundpeek/internal/sources/yangjibao"
 	"github.com/icpd/fundpeek/internal/valuation"
+	"github.com/icpd/fundpeek/internal/watchlist"
 )
 
 type realClient interface {
@@ -239,6 +240,55 @@ func (a *App) Status(ctx context.Context) error {
 	return nil
 }
 
+func (a *App) Watchlist() ([]watchlist.Item, error) {
+	return watchlist.NewStore(a.cfg.WatchlistPath).List()
+}
+
+func (a *App) AddWatchlistItem(item watchlist.Item) ([]watchlist.Item, error) {
+	return watchlist.NewStore(a.cfg.WatchlistPath).Add(item)
+}
+
+func (a *App) RemoveWatchlistItem(code string) ([]watchlist.Item, bool, error) {
+	market, short := valuation.NormalizeAStock(code)
+	if market != "" && short != "" {
+		code = market + short
+	}
+	return watchlist.NewStore(a.cfg.WatchlistPath).Remove(code)
+}
+
+func (a *App) SearchWatchlistCandidates(ctx context.Context, query string) ([]watchlist.Item, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("stock code or name is required")
+	}
+	client := valuation.NewClient()
+	results, err := client.SearchAStocks(ctx, query)
+	market, code := valuation.NormalizeAStock(query)
+	if err != nil {
+		if market != "" && code != "" {
+			return []watchlist.Item{{Code: code, Market: market}}, nil
+		}
+		return nil, err
+	}
+	items := make([]watchlist.Item, 0, len(results))
+	for _, result := range results {
+		items = append(items, watchlist.Item{
+			Code:   result.Code,
+			Name:   result.Name,
+			Market: result.Market,
+		})
+	}
+	if market != "" && code != "" {
+		for _, item := range items {
+			if item.Code == code && item.Market == market {
+				return []watchlist.Item{item}, nil
+			}
+		}
+		return []watchlist.Item{{Code: code, Market: market}}, nil
+	}
+	return items, nil
+}
+
 func (a *App) Sync(ctx context.Context, source string) error {
 	if source == "" {
 		source = "all"
@@ -413,6 +463,26 @@ func (a *App) SetStockQuote(code string, quote valuation.StockQuote) error {
 	return a.cache.Set("stock_quote/"+strings.TrimSpace(code), quote)
 }
 
+func (a *App) CachedStockMinute(code string) (valuation.StockMinute, bool, error) {
+	if a.cache == nil {
+		return valuation.StockMinute{}, false, nil
+	}
+	var minute valuation.StockMinute
+	if _, ok, err := a.cache.Get("stock_minute/"+strings.TrimSpace(code), &minute); err != nil {
+		return valuation.StockMinute{}, false, err
+	} else if ok {
+		return minute, true, nil
+	}
+	return valuation.StockMinute{}, false, nil
+}
+
+func (a *App) SetStockMinute(code string, minute valuation.StockMinute) error {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.Set("stock_minute/"+strings.TrimSpace(code), minute)
+}
+
 func (a *App) PushReal(ctx context.Context) error {
 	cred, err := a.realCred(ctx)
 	if err != nil {
@@ -538,6 +608,12 @@ func (a *App) InvalidateFundQuote(code string) {
 func (a *App) InvalidateStockQuote(code string) {
 	if a.cache != nil {
 		_ = a.cache.Invalidate("stock_quote/" + strings.TrimSpace(code))
+	}
+}
+
+func (a *App) InvalidateStockMinute(code string) {
+	if a.cache != nil {
+		_ = a.cache.Invalidate("stock_minute/" + strings.TrimSpace(code))
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/real"
 	"github.com/icpd/fundpeek/internal/valuation"
+	"github.com/icpd/fundpeek/internal/watchlist"
 )
 
 type fakeRealClient struct {
@@ -385,6 +386,40 @@ func TestQuoteCacheAccessors(t *testing.T) {
 	if !ok || gotStock.Price != 1800 {
 		t.Fatalf("cached stock quote = %#v ok=%v, want stored quote", gotStock, ok)
 	}
+
+	if err := a.SetStockMinute("sh600519", valuation.StockMinute{Code: "600519", Market: "sh", Date: "20260630"}); err != nil {
+		t.Fatal(err)
+	}
+	gotMinute, ok, err := a.CachedStockMinute("sh600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || gotMinute.Date != "20260630" {
+		t.Fatalf("cached stock minute = %#v ok=%v, want stored minute", gotMinute, ok)
+	}
+}
+
+func TestWatchlistAccessorsUseLocalFile(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+
+	if _, err := a.AddWatchlistItem(watchlist.Item{Code: "600519", Name: "贵州茅台", Market: "sh"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.Watchlist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Code != "600519" {
+		t.Fatalf("watchlist = %#v, want added stock", got)
+	}
+	got, removed, err := a.RemoveWatchlistItem("600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed || len(got) != 0 {
+		t.Fatalf("remove watchlist = removed %v items %#v, want empty", removed, got)
+	}
 }
 
 func TestCachedRealDataDoesNotRequireCredentials(t *testing.T) {
@@ -440,6 +475,24 @@ func TestInvalidateStockQuoteCache(t *testing.T) {
 	}
 }
 
+func TestInvalidateStockMinuteCache(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	a, _ := newCacheTestApp(t, now)
+	if err := a.SetStockMinute("sh600519", valuation.StockMinute{Code: "600519", Market: "sh", Date: "20260630"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.InvalidateStockMinute("sh600519")
+
+	_, ok, err := a.CachedStockMinute("sh600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("force refresh should invalidate stock minute cache")
+	}
+}
+
 func newCacheTestApp(t *testing.T, now time.Time) (*App, *fakeRealClient) {
 	t.Helper()
 	dir := t.TempDir()
@@ -462,6 +515,7 @@ func newCacheTestApp(t *testing.T, now time.Time) (*App, *fakeRealClient) {
 		ConfigDir:      dir,
 		CredentialPath: dir + "/credentials.json",
 		CacheDir:       dir + "/cache",
+		WatchlistPath:  dir + "/watchlist.json",
 	}, store)
 	a.real = fake
 	a.cache = fundcache.NewFileCache(dir+"/cache", func() time.Time { return now })

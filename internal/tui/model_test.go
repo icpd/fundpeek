@@ -17,6 +17,7 @@ import (
 	"github.com/icpd/fundpeek/internal/config"
 	fundmodel "github.com/icpd/fundpeek/internal/model"
 	"github.com/icpd/fundpeek/internal/valuation"
+	"github.com/icpd/fundpeek/internal/watchlist"
 	"github.com/muesli/termenv"
 )
 
@@ -281,6 +282,122 @@ func TestRenderTableDoesNotMarkMissingLatestPercent(t *testing.T) {
 	}
 	if !strings.Contains(out, "--") {
 		t.Fatalf("rendered table should keep missing latest percent placeholder:\n%s", out)
+	}
+}
+
+func TestRenderWatchShowsRowsAndAddPrompt(t *testing.T) {
+	out := renderWatchWithSpinner(watchState{
+		Rows: []WatchRow{{
+			Item:   watchlist.Item{Code: "600519", Name: "贵州茅台", Market: "sh"},
+			Quote:  valuation.StockQuote{ChangePercent: 1.23, HasChangePercent: true, Price: 1180, HasPrice: true},
+			Minute: valuation.StockMinute{Points: []valuation.StockMinutePoint{{Price: 1170}, {Price: 1180}, {Price: 1175}}},
+		}},
+		Adding: true,
+		Input:  newWatchState().Input,
+	}, 98, "")
+
+	for _, fragment := range []string{"fundpeek watch", "Tab funds", "添加自选股", "股票名称/代码", "贵州茅台 #sh600519", "+1.23%", "1180.00"} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("watch render missing %q:\n%s", fragment, out)
+		}
+	}
+	if strings.Contains(out, "走势") || strings.Contains(out, "分时") {
+		t.Fatalf("watch list should not show an intraday chart column:\n%s", out)
+	}
+}
+
+func TestRenderWatchDetailShowsMinuteChart(t *testing.T) {
+	out := renderWatchDetail(WatchRow{
+		Item:   watchlist.Item{Code: "600519", Name: "贵州茅台", Market: "sh"},
+		Quote:  valuation.StockQuote{ChangePercent: 1.23, HasChangePercent: true, Price: 1180, HasPrice: true},
+		Minute: valuation.StockMinute{Date: "20260630", Points: []valuation.StockMinutePoint{{Price: 1170}, {Price: 1180}, {Price: 1175}, {Price: 1190}}},
+	}, 80)
+
+	for _, fragment := range []string{"贵州茅台 #sh600519", "Esc back", "+1.23%", "1180.00", "2026-06-30", "│", "└"} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("watch detail missing %q:\n%s", fragment, out)
+		}
+	}
+	if strings.Contains(out, "┄") {
+		t.Fatalf("watch detail should not render waterline as a text dash:\n%s", out)
+	}
+	if !containsBraille(out) {
+		t.Fatalf("watch detail should render a braille line chart:\n%s", out)
+	}
+	if len(strings.Split(strings.TrimRight(out, "\n"), "\n")) < 8 {
+		t.Fatalf("watch detail should render a multi-line chart:\n%s", out)
+	}
+	if strings.Count(out, "│") < 8 {
+		t.Fatalf("watch detail should keep a full chart axis:\n%s", out)
+	}
+}
+
+func TestWatchChartWidthCapsWideTerminals(t *testing.T) {
+	if got := watchChartWidth(140); got != 88 {
+		t.Fatalf("watchChartWidth(140) = %d, want 88", got)
+	}
+}
+
+func TestMinuteChartKeepsAxisAlignedForWidePrices(t *testing.T) {
+	out := MinuteChart([]valuation.StockMinutePoint{
+		{Time: "0930", Price: 1223.01},
+		{Time: "0931", Price: 1294.68},
+		{Time: "0932", Price: 1281.98},
+	}, 88, 8)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	axis := -1
+	for _, line := range lines[:8] {
+		idx := strings.Index(line, "│")
+		if idx < 0 {
+			t.Fatalf("chart line missing axis: %q\n%s", line, out)
+		}
+		if axis < 0 {
+			axis = idx
+			continue
+		}
+		if idx != axis {
+			t.Fatalf("axis index = %d, want %d in line %q\n%s", idx, axis, line, out)
+		}
+	}
+}
+
+func TestMinuteChartReservesFourIntegerPriceDigits(t *testing.T) {
+	out := MinuteChart([]valuation.StockMinutePoint{
+		{Time: "0930", Price: 9.01},
+		{Time: "0931", Price: 10.23},
+		{Time: "0932", Price: 9.87},
+	}, 88, 8)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	prefix := strings.SplitN(lines[0], "│", 2)[0]
+	if got := lipgloss.Width(prefix); got != len("0000.00 ") {
+		t.Fatalf("axis prefix width = %d, want reserved 0000.00 label width in:\n%s", got, out)
+	}
+	if !strings.HasPrefix(lines[0], "  10.23 │") {
+		t.Fatalf("top label should be right-aligned in 0000.00 width:\n%s", out)
+	}
+}
+
+func containsBraille(text string) bool {
+	for _, r := range text {
+		if r >= '\u2801' && r <= '\u28ff' {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTabSwitchesBetweenFundAndWatchLists(t *testing.T) {
+	m := model{watch: newWatchState()}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	if m.listMode != listWatch {
+		t.Fatalf("listMode after tab = %v, want watch", m.listMode)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	if m.listMode != listFunds {
+		t.Fatalf("listMode after second tab = %v, want funds", m.listMode)
 	}
 }
 
@@ -757,6 +874,44 @@ func TestForceDetailRefreshInvalidatesFundHoldingsCache(t *testing.T) {
 	}
 }
 
+func TestForceWatchRefreshInvalidatesStockQuoteAndMinuteCache(t *testing.T) {
+	dir := t.TempDir()
+	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	if err := store.Set("stock_quote/s_sh600519", valuation.StockQuote{Code: "s_sh600519", Price: 1800, HasPrice: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("stock_minute/sh600519", valuation.StockMinute{Code: "600519", Market: "sh", Date: "20260630"}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		app:      fundapp.New(config.Config{CacheDir: dir}, nil),
+		listMode: listWatch,
+		watch: watchState{
+			Rows: []WatchRow{{Item: watchlist.Item{Code: "600519", Market: "sh"}}},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	_ = updated.(model)
+
+	var quote valuation.StockQuote
+	ok, err := store.GetFresh("stock_quote/s_sh600519", time.Hour, &quote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force watch refresh should invalidate stock quote cache: %#v", quote)
+	}
+	var minute valuation.StockMinute
+	ok, err = store.GetFresh("stock_minute/sh600519", time.Hour, &minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("force watch refresh should invalidate stock minute cache: %#v", minute)
+	}
+}
+
 func TestMoveCursorWrapsAroundRows(t *testing.T) {
 	m := model{rows: []Row{
 		{Position: Position{Code: "000001"}},
@@ -1137,6 +1292,12 @@ type stockQuoteFetcherFunc func(context.Context, []string) (map[string]valuation
 
 func (f stockQuoteFetcherFunc) FetchTencentStockQuotes(ctx context.Context, codes []string) (map[string]valuation.StockQuote, error) {
 	return f(ctx, codes)
+}
+
+type stockMinuteFetcherFunc func(context.Context, string) (valuation.StockMinute, error)
+
+func (f stockMinuteFetcherFunc) FetchStockMinute(ctx context.Context, code string) (valuation.StockMinute, error) {
+	return f(ctx, code)
 }
 
 func TestRenderDetailShowsHoldingsAndPartialQuoteFailure(t *testing.T) {

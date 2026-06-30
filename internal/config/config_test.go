@@ -43,6 +43,9 @@ func TestLoadCreatesCacheDir(t *testing.T) {
 	if cfg.CacheDir != dir+"/cache" {
 		t.Fatalf("CacheDir = %q, want %q", cfg.CacheDir, dir+"/cache")
 	}
+	if cfg.WatchlistPath != dir+"/watchlist.json" {
+		t.Fatalf("WatchlistPath = %q, want %q", cfg.WatchlistPath, dir+"/watchlist.json")
+	}
 	info, err := os.Stat(cfg.CacheDir)
 	if err != nil {
 		t.Fatalf("cache dir was not created: %v", err)

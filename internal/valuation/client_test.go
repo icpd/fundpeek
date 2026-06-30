@@ -103,6 +103,44 @@ func TestNormalizeTencentCode(t *testing.T) {
 	}
 }
 
+func TestNormalizeAStock(t *testing.T) {
+	tests := map[string]struct {
+		market string
+		code   string
+	}{
+		"600519":     {"sh", "600519"},
+		"000001":     {"sz", "000001"},
+		"430047":     {"bj", "430047"},
+		"sh600519":   {"sh", "600519"},
+		"s_sz000001": {"sz", "000001"},
+		"AAPL":       {"", ""},
+	}
+	for input, want := range tests {
+		market, code := NormalizeAStock(input)
+		if market != want.market || code != want.code {
+			t.Fatalf("NormalizeAStock(%q) = %q/%q, want %q/%q", input, market, code, want.market, want.code)
+		}
+	}
+}
+
+func TestParseEastmoneyStockSearchFiltersAStocks(t *testing.T) {
+	body := `({"QuotationCodeTable":{"Data":[{"Code":"000001","Name":"平安银行","Classify":"AStock"},{"Code":"01833","Name":"平安好医生","Classify":"HK"},{"Code":"601318","Name":"中国平安","Classify":"AStock"}]}})`
+
+	got, err := ParseEastmoneyStockSearch(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(results) = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Market != "sz" || got[0].Code != "000001" || got[0].Name != "平安银行" {
+		t.Fatalf("first result = %#v, want sz/000001/平安银行", got[0])
+	}
+	if got[1].Market != "sh" || got[1].Code != "601318" {
+		t.Fatalf("second result = %#v, want sh/601318", got[1])
+	}
+}
+
 func TestParseTencentStockQuotes(t *testing.T) {
 	body := strings.Join([]string{
 		`v_s_sh600519="1~贵州茅台~600519~1820.50~0~+1.23";`,
@@ -123,5 +161,20 @@ func TestParseTencentStockQuotes(t *testing.T) {
 	}
 	if q := got["usAAPL"]; q.Name != "苹果" || !q.HasChangePercent || q.ChangePercent != 0.56 || !q.HasPrice || q.Price != 192.10 {
 		t.Fatalf("unexpected US quote: %#v", q)
+	}
+}
+
+func TestParseTencentStockMinute(t *testing.T) {
+	body := `{"code":0,"msg":"","data":{"sh600519":{"data":{"data":["0930 1187.00 294 34897800.00","0931 1189.00 1050 124702396.33"],"date":"20260630"}}}}`
+
+	got, err := ParseTencentStockMinute(body, "sh600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Market != "sh" || got.Code != "600519" || got.Date != "20260630" {
+		t.Fatalf("minute identity = %#v, want sh/600519/20260630", got)
+	}
+	if len(got.Points) != 2 || got.Points[1].Time != "0931" || got.Points[1].Price != 1189.00 {
+		t.Fatalf("minute points = %#v, want parsed prices", got.Points)
 	}
 }

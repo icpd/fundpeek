@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/icpd/fundpeek/internal/httpclient"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 type Client struct {
@@ -68,6 +71,26 @@ type StockQuote struct {
 
 	Price    float64
 	HasPrice bool
+}
+
+type StockSearchResult struct {
+	Code   string
+	Name   string
+	Market string
+}
+
+type StockMinutePoint struct {
+	Time   string
+	Price  float64
+	Volume float64
+	Amount float64
+}
+
+type StockMinute struct {
+	Code   string
+	Market string
+	Date   string
+	Points []StockMinutePoint
 }
 
 type netValue struct {
@@ -169,7 +192,53 @@ func (c *Client) FetchTencentStockQuotes(ctx context.Context, codes []string) (m
 	if resp.IsError() {
 		return nil, fmt.Errorf("fetch tencent stock quotes: http %d: %s", resp.StatusCode(), httpclient.SafeBody(resp.Body()))
 	}
-	return ParseTencentStockQuotes(resp.String()), nil
+	body := decodeGB18030(resp.Body())
+	return ParseTencentStockQuotes(body), nil
+}
+
+func (c *Client) SearchAStocks(ctx context.Context, query string) ([]StockSearchResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("stock query is required")
+	}
+	client := httpclient.New("https://searchapi.eastmoney.com")
+	resp, err := client.R().
+		SetContext(ctx).
+		SetQueryParam("input", query).
+		SetQueryParam("type", "14").
+		SetQueryParam("count", "10").
+		Get("/api/suggest/get")
+	if err != nil {
+		return nil, fmt.Errorf("search stocks %q: %w", query, err)
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("search stocks %q: http %d: %s", query, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
+	}
+	return ParseEastmoneyStockSearch(resp.String())
+}
+
+func (c *Client) FetchStockMinute(ctx context.Context, code string) (StockMinute, error) {
+	market, normalized := NormalizeAStock(code)
+	if market == "" || normalized == "" {
+		return StockMinute{}, fmt.Errorf("unsupported A-share stock code %q", code)
+	}
+	tencentCode := market + normalized
+	client := httpclient.New("https://web.ifzq.gtimg.cn")
+	resp, err := client.R().
+		SetContext(ctx).
+		SetQueryParam("code", tencentCode).
+		Get("/appstock/app/minute/query")
+	if err != nil {
+		return StockMinute{}, fmt.Errorf("fetch stock minute %s: %w", tencentCode, err)
+	}
+	if resp.IsError() {
+		return StockMinute{}, fmt.Errorf("fetch stock minute %s: http %d: %s", tencentCode, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
+	}
+	minute, err := ParseTencentStockMinute(resp.String(), tencentCode)
+	if err != nil {
+		return StockMinute{}, err
+	}
+	return minute, nil
 }
 
 func (c *Client) fetchFundGZ(ctx context.Context, code string) (Quote, error) {
@@ -427,6 +496,113 @@ func NormalizeTencentCode(input string) string {
 	return ""
 }
 
+func NormalizeAStock(input string) (string, string) {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return "", ""
+	}
+	raw = strings.TrimPrefix(strings.ToLower(raw), "s_")
+	if m := regexp.MustCompile(`^(sh|sz|bj)(\d{6})$`).FindStringSubmatch(raw); len(m) == 3 {
+		return m[1], m[2]
+	}
+	if !regexp.MustCompile(`^\d{6}$`).MatchString(raw) {
+		return "", ""
+	}
+	market := "sz"
+	if strings.HasPrefix(raw, "6") || strings.HasPrefix(raw, "9") {
+		market = "sh"
+	} else if strings.HasPrefix(raw, "4") || strings.HasPrefix(raw, "8") {
+		market = "bj"
+	}
+	return market, raw
+}
+
+func ParseEastmoneyStockSearch(body string) ([]StockSearchResult, error) {
+	body = strings.TrimSpace(body)
+	if strings.HasPrefix(body, "(") && strings.HasSuffix(body, ")") {
+		body = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(body, "("), ")"))
+	}
+	var raw struct {
+		QuotationCodeTable struct {
+			Data []struct {
+				Code     string `json:"Code"`
+				Name     string `json:"Name"`
+				Classify string `json:"Classify"`
+			} `json:"Data"`
+		} `json:"QuotationCodeTable"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		return nil, fmt.Errorf("decode stock search: %w", err)
+	}
+	var out []StockSearchResult
+	seen := map[string]bool{}
+	for _, item := range raw.QuotationCodeTable.Data {
+		if item.Classify != "AStock" {
+			continue
+		}
+		market, code := NormalizeAStock(item.Code)
+		if market == "" || code == "" {
+			continue
+		}
+		key := market + code
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, StockSearchResult{
+			Code:   code,
+			Name:   strings.TrimSpace(item.Name),
+			Market: market,
+		})
+	}
+	return out, nil
+}
+
+func ParseTencentStockMinute(body string, code string) (StockMinute, error) {
+	code = strings.TrimSpace(code)
+	var raw struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data map[string]struct {
+			Data struct {
+				Data []string `json:"data"`
+				Date string   `json:"date"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		return StockMinute{}, fmt.Errorf("decode stock minute: %w", err)
+	}
+	if raw.Code != 0 {
+		return StockMinute{}, fmt.Errorf("fetch stock minute %s: %s", code, raw.Msg)
+	}
+	entry, ok := raw.Data[code]
+	if !ok {
+		return StockMinute{}, fmt.Errorf("stock minute %s: missing data", code)
+	}
+	market, short := NormalizeAStock(code)
+	out := StockMinute{Code: short, Market: market, Date: strings.TrimSpace(entry.Data.Date)}
+	for _, line := range entry.Data.Data {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		price, ok := parseNumber(fields[1])
+		if !ok {
+			continue
+		}
+		point := StockMinutePoint{Time: fields[0], Price: price}
+		if len(fields) > 2 {
+			point.Volume, _ = parseNumber(fields[2])
+		}
+		if len(fields) > 3 {
+			point.Amount, _ = parseNumber(fields[3])
+		}
+		out.Points = append(out.Points, point)
+	}
+	return out, nil
+}
+
 func ParseTencentStockQuotes(body string) map[string]StockQuote {
 	out := map[string]StockQuote{}
 	re := regexp.MustCompile(`(?s)v_([A-Za-z0-9_]+)="([^"]*)"`)
@@ -455,6 +631,15 @@ func ParseTencentStockQuotes(body string) map[string]StockQuote {
 		out[code] = q
 	}
 	return out
+}
+
+func decodeGB18030(body []byte) string {
+	reader := transform.NewReader(strings.NewReader(string(body)), simplifiedchinese.GB18030.NewDecoder())
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return string(body)
+	}
+	return string(decoded)
 }
 
 func extractF10Content(body string) string {

@@ -22,6 +22,7 @@ type Config struct {
 	ConfigDir      string
 	CacheDir       string
 	CredentialPath string
+	WatchlistPath  string
 }
 
 func Load() (Config, error) {
@@ -44,6 +45,7 @@ func Load() (Config, error) {
 		ConfigDir:      configDir,
 		CacheDir:       filepath.Join(configDir, "cache"),
 		CredentialPath: filepath.Join(configDir, "credentials.json"),
+		WatchlistPath:  filepath.Join(configDir, "watchlist.json"),
 	}
 	if err := validateSupabaseURL(cfg.SupabaseURL); err != nil {
 		return Config{}, err
