@@ -1130,7 +1130,7 @@ func TestRefreshDetailStoresStockQuoteCache(t *testing.T) {
 			}, nil
 		})
 	}
-	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })
+	store := fundcache.NewFileCache(dir, time.Now)
 	if err := store.Set("fund_holdings/000001", valuation.FundStockHoldings{
 		ReportDate: "2026-03-31",
 		IsRecent:   true,

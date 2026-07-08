@@ -21,6 +21,7 @@ import (
 type Client struct {
 	fundgz *resty.Client
 	f10    *resty.Client
+	minute *resty.Client
 }
 
 type Quote struct {
@@ -104,6 +105,7 @@ func NewClient() *Client {
 	return &Client{
 		fundgz: httpclient.New("https://fundgz.1234567.com.cn"),
 		f10:    httpclient.New("https://fundf10.eastmoney.com"),
+		minute: httpclient.New("https://proxy.finance.qq.com"),
 	}
 }
 
@@ -223,11 +225,14 @@ func (c *Client) FetchStockMinute(ctx context.Context, code string) (StockMinute
 		return StockMinute{}, fmt.Errorf("unsupported A-share stock code %q", code)
 	}
 	tencentCode := market + normalized
-	client := httpclient.New("https://web.ifzq.gtimg.cn")
+	client := c.minute
+	if client == nil {
+		client = httpclient.New("https://proxy.finance.qq.com")
+	}
 	resp, err := client.R().
 		SetContext(ctx).
 		SetQueryParam("code", tencentCode).
-		Get("/appstock/app/minute/query")
+		Get("/ifzqgtimg/appstock/app/minute/query")
 	if err != nil {
 		return StockMinute{}, fmt.Errorf("fetch stock minute %s: %w", tencentCode, err)
 	}

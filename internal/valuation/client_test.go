@@ -1,10 +1,15 @@
 package valuation
 
 import (
+	"context"
+	"io"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 )
 
 func TestParseFundGZ(t *testing.T) {
@@ -177,4 +182,40 @@ func TestParseTencentStockMinute(t *testing.T) {
 	if len(got.Points) != 2 || got.Points[1].Time != "0931" || got.Points[1].Price != 1189.00 {
 		t.Fatalf("minute points = %#v, want parsed prices", got.Points)
 	}
+}
+
+func TestFetchStockMinuteUsesTencentProxyEndpoint(t *testing.T) {
+	var gotPath string
+	var gotCode string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		gotCode = r.URL.Query().Get("code")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"code":0,"msg":"","data":{"sh600519":{"data":{"data":["0930 1187.00 294 34897800.00"],"date":"20260630"}}}}`)),
+			Request:    r,
+		}, nil
+	})
+
+	client := &Client{minute: resty.New().SetBaseURL("https://proxy.finance.qq.com").SetTransport(transport)}
+	got, err := client.FetchStockMinute(context.Background(), "600519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/ifzqgtimg/appstock/app/minute/query" {
+		t.Fatalf("minute request path = %q, want proxy path", gotPath)
+	}
+	if gotCode != "sh600519" {
+		t.Fatalf("minute request code = %q, want sh600519", gotCode)
+	}
+	if got.Market != "sh" || got.Code != "600519" || len(got.Points) != 1 {
+		t.Fatalf("minute response = %#v, want parsed sh600519 point", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
