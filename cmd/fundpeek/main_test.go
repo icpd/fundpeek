@@ -115,6 +115,8 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"输出基金持仓和行情 JSON",
 		"watch <action>",
 		"管理自选股票",
+		"stock <action>",
+		"查询股票数据",
 		"刷新本地持仓数据",
 		"push real",
 		"Sources:",
@@ -123,6 +125,7 @@ func TestHelpIncludesCommandDescriptionsAndExamples(t *testing.T) {
 		"Examples:",
 		"fundpeek sync",
 		"fundpeek watch add 600519",
+		"fundpeek stock quote 600519",
 		"fundpeek json",
 		"fundpeek push real",
 		"fundpeek help sync",
@@ -168,6 +171,11 @@ func TestSubcommandHelpIncludesUsage(t *testing.T) {
 			name: "watch",
 			args: []string{"watch", "--help"},
 			want: []string{"fundpeek watch - 管理自选股票", "Usage:", "fundpeek watch add <code-or-name>", "watchlist.json"},
+		},
+		{
+			name: "stock",
+			args: []string{"stock", "--help"},
+			want: []string{"fundpeek stock - 查询股票数据", "Usage:", "fundpeek stock quote <code>", "fundpeek stock list", "JSON"},
 		},
 		{
 			name: "sync",
@@ -267,6 +275,9 @@ func TestJSONIsKnownCommand(t *testing.T) {
 	}
 	if !isKnownCommand("watch") {
 		t.Fatal("watch should be a known command")
+	}
+	if !isKnownCommand("stock") {
+		t.Fatal("stock should be a known command")
 	}
 }
 

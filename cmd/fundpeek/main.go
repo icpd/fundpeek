@@ -16,6 +16,7 @@ import (
 	"github.com/icpd/fundpeek/internal/credential"
 	"github.com/icpd/fundpeek/internal/jsonexport"
 	"github.com/icpd/fundpeek/internal/model"
+	"github.com/icpd/fundpeek/internal/stockexport"
 	"github.com/icpd/fundpeek/internal/tui"
 	"github.com/icpd/fundpeek/internal/watchlist"
 )
@@ -85,6 +86,8 @@ func run() error {
 		return jsonexport.Write(ctx, a, os.Stdout)
 	case "watch":
 		return runWatch(ctx, a, args[1:])
+	case "stock":
+		return runStock(ctx, a, args[1:])
 	case "sync":
 		sourceArg := ""
 		if len(args) >= 2 {
@@ -170,7 +173,7 @@ func hasHelpArgument(args []string) bool {
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "auth", "status", "sync", "push", "logout", "tui", "json", "watch":
+	case "auth", "status", "sync", "push", "logout", "tui", "json", "watch", "stock":
 		return true
 	default:
 		return false
@@ -299,6 +302,36 @@ func runWatch(ctx context.Context, a *app.App, args []string) error {
 	}
 }
 
+func runStock(ctx context.Context, a *app.App, args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing stock action: search, quote, minute, list")
+	}
+	switch args[0] {
+	case "search":
+		if len(args) < 2 {
+			return errors.New("usage: fundpeek stock search <query>")
+		}
+		return stockexport.WriteSearch(ctx, strings.Join(args[1:], " "), os.Stdout)
+	case "quote":
+		if len(args) != 2 {
+			return errors.New("usage: fundpeek stock quote <code>")
+		}
+		return stockexport.WriteQuote(ctx, a, args[1], os.Stdout)
+	case "minute":
+		if len(args) != 2 {
+			return errors.New("usage: fundpeek stock minute <code>")
+		}
+		return stockexport.WriteMinute(ctx, a, args[1], os.Stdout)
+	case "list":
+		if len(args) != 1 {
+			return errors.New("stock list does not accept arguments")
+		}
+		return stockexport.WriteList(ctx, a, os.Stdout)
+	default:
+		return fmt.Errorf("unknown stock action %q", args[0])
+	}
+}
+
 func printWatchCandidates(items []watchlist.Item) {
 	fmt.Println("matched stocks:")
 	for _, item := range items {
@@ -332,6 +365,7 @@ Commands:
   tui                           打开基金估值和持仓 TUI
   json                          输出基金持仓和行情 JSON
   watch <action>                管理自选股票，支持 list、add、remove
+  stock <action>                查询股票数据，输出 JSON
   sync [source]                 刷新本地持仓数据，可选 yjb、xb、all，默认 all
   push real                     将本地持仓数据同步到基估宝
   logout <source>               退出指定数据源登录
@@ -348,6 +382,7 @@ Examples:
   fundpeek sync
   fundpeek tui
   fundpeek watch add 600519
+  fundpeek stock quote 600519
   fundpeek json
   fundpeek push real
   fundpeek help sync`)
@@ -423,6 +458,26 @@ Examples:
   fundpeek watch add 600519
   fundpeek watch add 贵州茅台
   fundpeek watch remove 600519`)
+		return true
+	case "stock":
+		fmt.Println(`fundpeek stock - 查询股票数据
+
+Usage:
+  fundpeek stock search <query>
+  fundpeek stock quote <code>
+  fundpeek stock minute <code>
+  fundpeek stock list
+
+Notes:
+  输出稳定 JSON，适合脚本或大模型读取。
+  quote 和 minute 第一版支持 A 股代码；search 用于按名称查找 A 股候选。
+  list 读取本地 watchlist.json 并刷新自选股行情，不修改自选股列表。
+
+Examples:
+  fundpeek stock search 茅台
+  fundpeek stock quote 600519
+  fundpeek stock minute 600519
+  fundpeek stock list`)
 		return true
 	case "sync":
 		fmt.Println(`fundpeek sync - 刷新本地持仓数据

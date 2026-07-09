@@ -9,6 +9,7 @@
 - 将多来源持仓合并成本地 portfolio 快照，供 TUI 和 JSON 使用。
 - 通过 TUI 查看本地持仓、基金实时估值、估算收益汇总和基金股票持仓明细。
 - 管理本地自选股票，在列表中查看当日涨幅和最新价，并进入详情页查看分时图。
+- 通过 JSON 命令查询股票搜索结果、单股行情、单股分时和自选股行情，方便脚本或大模型读取。
 - 可选登录基估宝，并把本地 portfolio 推送到基估宝云端配置。
 
 ## 安装
@@ -68,7 +69,7 @@ fundpeek tui
 
 在 TUI 中按 `Tab` 可切换到自选股列表，按 `a` 输入股票代码或名称添加自选，按 `d` 删除当前选中的自选股。自选股列表会显示交易日当天涨幅和最新价，选中股票后按 Enter 可查看终端字符分时图。
 
-5. 输出 JSON 给脚本或大模型分析：
+5. 输出基金 JSON 给脚本或大模型分析：
 
 ```sh
 fundpeek json
@@ -76,7 +77,18 @@ fundpeek json
 
 JSON 会读取本地 portfolio 快照并刷新基金行情，输出基金列表、份额、来源持仓金额、成本金额、估算市值、最新净值市值、估值涨幅、估值口径当日收益、最新净值涨幅和汇总；单只基金行情失败时会保留基金并在 `errors` 中记录原因。
 
-6. 如果还想在基估宝 GUI 面板中查看，登录基估宝并推送本地数据：
+6. 查询股票 JSON 给脚本或大模型分析：
+
+```sh
+fundpeek stock search 茅台
+fundpeek stock quote 600519
+fundpeek stock minute 600519
+fundpeek stock list
+```
+
+`stock search` 用于查找 A 股候选；`stock quote` 输出单只股票最新价和涨跌幅；`stock minute` 输出单只 A 股分时；`stock list` 读取本地自选股并刷新行情。股票查询输出稳定 JSON，失败时会保留股票身份并在 `errors` 中记录原因。
+
+7. 如果还想在基估宝 GUI 面板中查看，登录基估宝并推送本地数据：
 
 ```sh
 fundpeek auth real
@@ -92,6 +104,10 @@ fundpeek tui
 fundpeek watch list
 fundpeek watch add 600519
 fundpeek watch remove 600519
+fundpeek stock search 茅台
+fundpeek stock quote 600519
+fundpeek stock minute 600519
+fundpeek stock list
 fundpeek json
 fundpeek sync
 fundpeek sync yjb
@@ -104,6 +120,7 @@ fundpeek logout xb
 
 - `tui`：启动交互式终端界面。
 - `watch`：管理本地自选股票，支持 `list`、`add`、`remove`。
+- `stock`：查询股票搜索、行情、分时或本地自选股行情，输出 JSON。
 - `json`：输出基金持仓和行情 JSON，适合脚本或大模型读取。
 - `sync`：刷新本地 portfolio 快照；不带来源时默认刷新所有已授权来源。
 - `push real`：把本地 portfolio 快照推送到基估宝云端配置。
