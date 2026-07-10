@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -296,17 +297,15 @@ func MinuteChartWithBaseline(points []valuation.StockMinutePoint, baseline float
 	if width < 12 || height < 3 {
 		return ""
 	}
+	chartPoints := make([]valuation.StockMinutePoint, 0, len(points))
 	values := make([]float64, 0, len(points))
 	for _, point := range points {
 		if point.Price > 0 {
+			chartPoints = append(chartPoints, point)
 			values = append(values, point.Price)
 		}
 	}
 	if len(values) == 0 {
-		return ""
-	}
-	plotWidth := width - 7
-	if plotWidth < 4 {
 		return ""
 	}
 	minV, maxV := values[0], values[0]
@@ -333,9 +332,13 @@ func MinuteChartWithBaseline(points []valuation.StockMinutePoint, baseline float
 	if maxV <= minV {
 		maxV = minV + 1
 	}
-	waterlineY := chartY(baseline, minV, maxV, height)
-	plot := brailleLineChart(values, plotWidth, height, minV, maxV, baseline)
 	labelWidth := chartLabelWidth(maxV, minV, baseline)
+	plotWidth := width - labelWidth - 2
+	if plotWidth < 4 {
+		return ""
+	}
+	waterlineY := chartY(baseline, minV, maxV, height)
+	plot := brailleLineChart(chartPoints, plotWidth, height, minV, maxV, baseline)
 	var b strings.Builder
 	for y := 0; y < height; y++ {
 		value := maxV - (maxV-minV)*float64(y)/float64(height-1)
@@ -355,7 +358,7 @@ func MinuteChartWithBaseline(points []valuation.StockMinutePoint, baseline float
 	b.WriteString(strings.Repeat("─", plotWidth))
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat(" ", labelWidth+2))
-	b.WriteString(minuteChartXLabels(points, plotWidth))
+	b.WriteString(minuteChartXLabels(plotWidth))
 	return b.String()
 }
 
@@ -395,30 +398,6 @@ func chartY(value float64, minV float64, maxV float64, height int) int {
 	return y
 }
 
-func downsampleAverage(values []float64, width int) []float64 {
-	if width <= 0 || len(values) <= width {
-		return values
-	}
-	out := make([]float64, 0, width)
-	step := float64(len(values)) / float64(width)
-	for i := 0; i < width; i++ {
-		start := int(math.Floor(float64(i) * step))
-		end := int(math.Floor(float64(i+1) * step))
-		if end <= start {
-			end = start + 1
-		}
-		if end > len(values) {
-			end = len(values)
-		}
-		var sum float64
-		for _, value := range values[start:end] {
-			sum += value
-		}
-		out = append(out, sum/float64(end-start))
-	}
-	return out
-}
-
 func watchChartWidth(windowWidth int) int {
 	if windowWidth <= 0 {
 		return 74
@@ -446,10 +425,7 @@ func formatMinuteDate(value string) string {
 	return value
 }
 
-func brailleLineChart(values []float64, width int, height int, minV float64, maxV float64, baseline float64) []string {
-	if len(values) > width*2 {
-		values = downsampleAverage(values, width*2)
-	}
+func brailleLineChart(points []valuation.StockMinutePoint, width int, height int, minV float64, maxV float64, baseline float64) []string {
 	pixelWidth := width * 2
 	pixelHeight := height * 4
 	canvas := make([][]byte, height)
@@ -457,13 +433,18 @@ func brailleLineChart(values []float64, width int, height int, minV float64, max
 		canvas[y] = make([]byte, width)
 	}
 	drawBrailleHorizontal(canvas, chartPixelY(baseline, minV, maxV, pixelHeight), pixelWidth)
+	points = chartPointsForPlot(points, pixelWidth)
+	useTradingTime := pointsUseAShareTradingTime(points)
 	var prevX, prevY int
-	for i, value := range values {
+	for i, point := range points {
 		x := 0
-		if len(values) > 1 {
-			x = int(math.Round(float64(i) / float64(len(values)-1) * float64(pixelWidth-1)))
+		if useTradingTime {
+			offset, _ := aShareTradingMinuteOffset(point.Time)
+			x = int(math.Round(float64(offset) / 240 * float64(pixelWidth-1)))
+		} else if len(points) > 1 {
+			x = int(math.Round(float64(i) / float64(len(points)-1) * float64(pixelWidth-1)))
 		}
-		y := chartPixelY(value, minV, maxV, pixelHeight)
+		y := chartPixelY(point.Price, minV, maxV, pixelHeight)
 		if i > 0 {
 			drawBrailleLine(canvas, prevX, prevY, x, y)
 		}
@@ -484,6 +465,74 @@ func brailleLineChart(values []float64, width int, height int, minV float64, max
 		out[y] = b.String()
 	}
 	return out
+}
+
+func chartPointsForPlot(points []valuation.StockMinutePoint, maxPoints int) []valuation.StockMinutePoint {
+	if maxPoints <= 0 || len(points) <= maxPoints || pointsUseAShareTradingTime(points) {
+		return points
+	}
+	out := make([]valuation.StockMinutePoint, 0, maxPoints)
+	step := float64(len(points)) / float64(maxPoints)
+	for i := 0; i < maxPoints; i++ {
+		start := int(math.Floor(float64(i) * step))
+		end := int(math.Floor(float64(i+1) * step))
+		if end <= start {
+			end = start + 1
+		}
+		if end > len(points) {
+			end = len(points)
+		}
+		point := points[start]
+		point.Time = ""
+		point.Price = 0
+		for _, sample := range points[start:end] {
+			point.Price += sample.Price
+		}
+		point.Price /= float64(end - start)
+		out = append(out, point)
+	}
+	return out
+}
+
+func pointsUseAShareTradingTime(points []valuation.StockMinutePoint) bool {
+	if len(points) == 0 {
+		return false
+	}
+	for _, point := range points {
+		if _, ok := aShareTradingMinuteOffset(point.Time); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func aShareTradingMinuteOffset(value string) (int, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) != 4 {
+		return 0, false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return 0, false
+		}
+	}
+	hour, err := strconv.Atoi(value[:2])
+	if err != nil {
+		return 0, false
+	}
+	minute, err := strconv.Atoi(value[2:])
+	if err != nil || minute >= 60 {
+		return 0, false
+	}
+	total := hour*60 + minute
+	switch {
+	case total >= 9*60+30 && total <= 11*60+30:
+		return total - (9*60 + 30), true
+	case total >= 13*60 && total <= 15*60:
+		return 120 + total - 13*60, true
+	default:
+		return 0, false
+	}
 }
 
 func chartPixelY(value float64, minV float64, maxV float64, pixelHeight int) int {
@@ -575,25 +624,17 @@ func brailleDot(x int, y int) byte {
 	return 0
 }
 
-func minuteChartXLabels(points []valuation.StockMinutePoint, width int) string {
-	if width <= 0 || len(points) == 0 {
+func minuteChartXLabels(width int) string {
+	if width <= 0 {
 		return ""
 	}
-	start := formatMinuteTime(points[0].Time)
-	end := formatMinuteTime(points[len(points)-1].Time)
-	if start == "" || end == "" || lipgloss.Width(start)+lipgloss.Width(end)+1 > width {
+	const start = "09:30"
+	const end = "15:00"
+	if lipgloss.Width(start)+lipgloss.Width(end)+1 > width {
 		return ""
 	}
 	gap := width - lipgloss.Width(start) - lipgloss.Width(end)
 	return start + strings.Repeat(" ", gap) + end
-}
-
-func formatMinuteTime(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) == 4 {
-		return value[:2] + ":" + value[2:]
-	}
-	return value
 }
 
 func absInt(value int) int {

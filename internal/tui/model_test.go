@@ -344,6 +344,84 @@ func TestRenderWatchDetailUsesPreviousCloseAsMinuteBaseline(t *testing.T) {
 	}
 }
 
+func TestMinuteChartUsesFixedAShareTradingSessionAxis(t *testing.T) {
+	out := MinuteChart([]valuation.StockMinutePoint{
+		{Time: "0930", Price: 100},
+		{Time: "1000", Price: 110},
+	}, 48, 8)
+	lines := strings.Split(out, "\n")
+	labels := lines[len(lines)-1]
+	if !strings.Contains(labels, "09:30") || !strings.Contains(labels, "15:00") {
+		t.Fatalf("minute chart labels = %q, want fixed 09:30 and 15:00 session endpoints:\n%s", labels, out)
+	}
+
+	parts := strings.SplitN(lines[0], "│", 2)
+	if len(parts) != 2 {
+		t.Fatalf("minute chart top row missing plot axis:\n%s", out)
+	}
+	plot := parts[1]
+	if got := lipgloss.Width(strings.TrimRight(plot, " ")); got >= lipgloss.Width(plot)/2 {
+		t.Fatalf("10:00 point reaches too far across a fixed trading-session axis: used=%d width=%d\n%s", got, lipgloss.Width(plot), out)
+	}
+}
+
+func TestMinuteChartFitsRequestedWidth(t *testing.T) {
+	const width = 48
+	out := MinuteChart([]valuation.StockMinutePoint{
+		{Time: "0930", Price: 100},
+		{Time: "1000", Price: 110},
+	}, width, 8)
+	for i, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("minute chart line %d width = %d, want at most %d:\n%s", i, got, width, out)
+		}
+	}
+}
+
+func TestAShareTradingMinuteOffsetCompressesLunchBreak(t *testing.T) {
+	tests := []struct {
+		time   string
+		offset int
+	}{
+		{time: "0930", offset: 0},
+		{time: "1130", offset: 120},
+		{time: "1300", offset: 120},
+		{time: "1500", offset: 240},
+	}
+	for _, tt := range tests {
+		t.Run(tt.time, func(t *testing.T) {
+			got, ok := aShareTradingMinuteOffset(tt.time)
+			if !ok || got != tt.offset {
+				t.Fatalf("aShareTradingMinuteOffset(%q) = (%d, %v), want (%d, true)", tt.time, got, ok, tt.offset)
+			}
+		})
+	}
+}
+
+func TestAShareTradingMinuteOffsetRejectsMalformedTime(t *testing.T) {
+	for _, value := range []string{"10-1", "1a01", "1260", "1200"} {
+		t.Run(value, func(t *testing.T) {
+			if got, ok := aShareTradingMinuteOffset(value); ok {
+				t.Fatalf("aShareTradingMinuteOffset(%q) = (%d, true), want invalid", value, got)
+			}
+		})
+	}
+}
+
+func TestMinuteChartDownsamplesDensePointsWithoutTimes(t *testing.T) {
+	points := make([]valuation.StockMinutePoint, 0, 200)
+	for i := 0; i < 200; i++ {
+		points = append(points, valuation.StockMinutePoint{Price: float64(i + 1)})
+	}
+	got := chartPointsForPlot(points, 20)
+	if len(got) != 20 {
+		t.Fatalf("chartPointsForPlot dense fallback length = %d, want 20", len(got))
+	}
+	if got[0].Price != 5.5 || got[len(got)-1].Price != 195.5 {
+		t.Fatalf("chartPointsForPlot dense fallback endpoints = %.2f, %.2f, want averaged 5.50, 195.50", got[0].Price, got[len(got)-1].Price)
+	}
+}
+
 func TestWatchChartWidthCapsWideTerminals(t *testing.T) {
 	if got := watchChartWidth(140); got != 88 {
 		t.Fatalf("watchChartWidth(140) = %d, want 88", got)
