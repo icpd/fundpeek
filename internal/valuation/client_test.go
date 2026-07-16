@@ -89,6 +89,56 @@ func TestParseFundStockHoldingsFallsBackToFirstDateAndHidesStaleHoldings(t *test
 	}
 }
 
+func TestFetchFundStockHoldingsSetsFundPageReferer(t *testing.T) {
+	var gotReferer string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotReferer = r.Header.Get("Referer")
+		body := `var apidata={ content:"<div>报告期：2026-03-31</div><table><thead><tr><th>股票代码</th><th>股票名称</th></tr></thead><tbody><tr><td>600519</td><td>贵州茅台</td></tr></tbody></table>",records:1};`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})
+	client := &Client{f10: resty.New().SetBaseURL("https://fundf10.eastmoney.com").SetTransport(transport)}
+
+	got, err := client.FetchFundStockHoldings(context.Background(), "006503")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Holdings) != 1 || got.Holdings[0].Code != "600519" {
+		t.Fatalf("holdings = %#v, want parsed fixture", got.Holdings)
+	}
+	want := "https://fundf10.eastmoney.com/ccmx_006503.html"
+	if gotReferer != want {
+		t.Fatalf("holdings Referer = %q, want %q", gotReferer, want)
+	}
+}
+
+func TestFetchFundStockHoldingsHidesHTMLErrorBody(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Header:     http.Header{"Content-Type": []string{"text/html; charset=UTF-8"}},
+			Body:       io.NopCloser(strings.NewReader("<html>not found</html>")),
+			Request:    r,
+		}, nil
+	})
+	client := &Client{f10: resty.New().SetBaseURL("https://fundf10.eastmoney.com").SetTransport(transport)}
+
+	_, err := client.FetchFundStockHoldings(context.Background(), "006503")
+	if err == nil {
+		t.Fatal("expected HTTP error")
+	}
+	if !strings.Contains(err.Error(), "fetch fund holdings 006503: http 404") {
+		t.Fatalf("error = %q, want operation, code, and status", err)
+	}
+	if strings.Contains(err.Error(), "<html>") || strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error should hide HTML response body: %q", err)
+	}
+}
+
 func TestNormalizeTencentCode(t *testing.T) {
 	tests := map[string]string{
 		"600519":     "s_sh600519",

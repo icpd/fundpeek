@@ -157,13 +157,18 @@ func (c *Client) FetchFundStockHoldings(ctx context.Context, code string) (FundS
 		return FundStockHoldings{}, fmt.Errorf("fund code is required")
 	}
 	path := fmt.Sprintf("/FundArchivesDatas.aspx?type=jjcc&code=%s&topline=1000&year=&month=&_=%d", code, time.Now().UnixMilli())
+	referer := fmt.Sprintf("https://fundf10.eastmoney.com/ccmx_%s.html", code)
 	resp, err := c.f10.R().
 		SetContext(ctx).
+		SetHeader("Referer", referer).
 		Get(path)
 	if err != nil {
 		return FundStockHoldings{}, fmt.Errorf("fetch fund holdings %s: %w", code, err)
 	}
 	if resp.IsError() {
+		if strings.Contains(strings.ToLower(resp.Header().Get("Content-Type")), "text/html") {
+			return FundStockHoldings{}, fmt.Errorf("fetch fund holdings %s: http %d", code, resp.StatusCode())
+		}
 		return FundStockHoldings{}, fmt.Errorf("fetch fund holdings %s: http %d: %s", code, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
 	}
 	return ParseFundStockHoldings(resp.String(), time.Now()), nil
