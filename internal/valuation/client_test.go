@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -29,16 +30,55 @@ func TestParseFundGZ(t *testing.T) {
 }
 
 func TestParseNetValues(t *testing.T) {
-	body := `var apidata={ content:"<table><tbody><tr><td>2026-05-08</td><td class='tor bold'>1.1960</td><td>3.7690</td><td>-1.48%</td></tr><tr><td>2026-05-07</td><td>1.2140</td><td>3.7870</td><td>1.51%</td></tr></tbody></table>",records:2,pages:1,curpage:1};`
-	got := ParseNetValues(body)
+	body := `{"Data":{"LSJZList":[{"FSRQ":"2026-07-15","DWJZ":"1.4600","JZZZL":"-3.31"},{"FSRQ":"2026-07-14","DWJZ":"1.5100","JZZZL":"1.27"}]},"ErrCode":0,"ErrMsg":null,"PageSize":2,"PageIndex":1}`
+
+	got, err := ParseNetValues(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("len(ParseNetValues) = %d, want 2: %#v", len(got), got)
 	}
-	if got[0].Date != "2026-05-07" || got[1].Date != "2026-05-08" {
+	if got[0].Date != "2026-07-14" || got[1].Date != "2026-07-15" {
 		t.Fatalf("dates not sorted ascending: %#v", got)
 	}
-	if !got[1].HasGrowth || got[1].Growth != -1.48 {
-		t.Fatalf("latest growth = %v/%f, want true/-1.48", got[1].HasGrowth, got[1].Growth)
+	if got[1].NAV != 1.46 || !got[1].HasGrowth || got[1].Growth != -3.31 {
+		t.Fatalf("latest NAV/growth = %#v, want 1.46/-3.31", got[1])
+	}
+}
+
+func TestFetchLatestNetValuesUsesCurrentJSONAPI(t *testing.T) {
+	var gotURL *url.URL
+	var gotReferer string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotURL = r.URL
+		gotReferer = r.Header.Get("Referer")
+		body := `{"Data":{"LSJZList":[{"FSRQ":"2026-07-15","DWJZ":"1.4600","JZZZL":"-3.31"}]},"ErrCode":0}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})
+	client := &Client{fundAPI: resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(transport)}
+
+	values, err := client.fetchLatestNetValues(context.Background(), "000001", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 || values[0].Growth != -3.31 {
+		t.Fatalf("values = %#v, want parsed JSON value", values)
+	}
+	if gotURL.Scheme != "https" || gotURL.Host != "api.fund.eastmoney.com" || gotURL.Path != "/f10/lsjz" {
+		t.Fatalf("request URL = %s, want current NAV API", gotURL)
+	}
+	query := gotURL.Query()
+	if query.Get("fundCode") != "000001" || query.Get("pageIndex") != "1" || query.Get("pageSize") != "3" || query.Get("startDate") != "" || query.Get("endDate") != "" {
+		t.Fatalf("request query = %v, want fund code, page, size, and empty date range", query)
+	}
+	if want := "https://fundf10.eastmoney.com/jjjz_000001.html"; gotReferer != want {
+		t.Fatalf("Referer = %q, want %q", gotReferer, want)
 	}
 }
 

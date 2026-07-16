@@ -19,9 +19,10 @@ import (
 )
 
 type Client struct {
-	fundgz *resty.Client
-	f10    *resty.Client
-	minute *resty.Client
+	fundgz  *resty.Client
+	f10     *resty.Client
+	fundAPI *resty.Client
+	minute  *resty.Client
 }
 
 type Quote struct {
@@ -103,9 +104,10 @@ type netValue struct {
 
 func NewClient() *Client {
 	return &Client{
-		fundgz: httpclient.New("https://fundgz.1234567.com.cn"),
-		f10:    httpclient.New("https://fundf10.eastmoney.com"),
-		minute: httpclient.New("https://proxy.finance.qq.com"),
+		fundgz:  httpclient.New("https://fundgz.1234567.com.cn"),
+		f10:     httpclient.New("https://fundf10.eastmoney.com"),
+		fundAPI: httpclient.New("https://api.fund.eastmoney.com"),
+		minute:  httpclient.New("https://proxy.finance.qq.com"),
 	}
 }
 
@@ -266,19 +268,27 @@ func (c *Client) fetchFundGZ(ctx context.Context, code string) (Quote, error) {
 }
 
 func (c *Client) fetchLatestNetValues(ctx context.Context, code string, count int) ([]netValue, error) {
-	path := fmt.Sprintf("/F10DataApi.aspx?type=lsjz&code=%s&page=1&per=%d&sdate=&edate=", code, count)
-	resp, err := c.f10.R().
+	referer := fmt.Sprintf("https://fundf10.eastmoney.com/jjjz_%s.html", code)
+	resp, err := c.fundAPI.R().
 		SetContext(ctx).
-		Get(path)
+		SetHeader("Referer", referer).
+		SetQueryParams(map[string]string{
+			"fundCode":  code,
+			"pageIndex": "1",
+			"pageSize":  strconv.Itoa(count),
+			"startDate": "",
+			"endDate":   "",
+		}).
+		Get("/f10/lsjz")
 	if err != nil {
 		return nil, fmt.Errorf("fetch net values %s: %w", code, err)
 	}
 	if resp.IsError() {
 		return nil, fmt.Errorf("fetch net values %s: http %d: %s", code, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
 	}
-	values := ParseNetValues(resp.String())
-	if len(values) == 0 {
-		return nil, fmt.Errorf("fetch net values %s: empty response", code)
+	values, err := ParseNetValues(resp.String())
+	if err != nil {
+		return nil, fmt.Errorf("fetch net values %s: %w", code, err)
 	}
 	return values, nil
 }
@@ -325,50 +335,50 @@ func ParseFundGZ(body string) (Quote, error) {
 	return q, nil
 }
 
-func ParseNetValues(body string) []netValue {
-	content := extractF10Content(body)
-	if content == "" || strings.Contains(content, "暂无数据") {
-		return nil
+func ParseNetValues(body string) ([]netValue, error) {
+	var raw struct {
+		Data *struct {
+			List []struct {
+				Date   string `json:"FSRQ"`
+				NAV    string `json:"DWJZ"`
+				Growth string `json:"JZZZL"`
+			} `json:"LSJZList"`
+		} `json:"Data"`
+		ErrCode int    `json:"ErrCode"`
+		ErrMsg  string `json:"ErrMsg"`
 	}
-	rowRe := regexp.MustCompile(`(?is)<tr[\s\S]*?</tr>`)
-	cellRe := regexp.MustCompile(`(?is)<td[^>]*>([\s\S]*?)</td>`)
-	tagRe := regexp.MustCompile(`(?is)<[^>]+>`)
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		return nil, fmt.Errorf("decode net values: %w", err)
+	}
+	if raw.ErrCode != 0 {
+		return nil, fmt.Errorf("net values api error %d: %s", raw.ErrCode, strings.TrimSpace(raw.ErrMsg))
+	}
+	if raw.Data == nil {
+		return nil, fmt.Errorf("net values response missing data")
+	}
 
-	var values []netValue
-	for _, row := range rowRe.FindAllString(content, -1) {
-		cells := cellRe.FindAllStringSubmatch(row, -1)
-		if len(cells) < 2 {
+	dateRE := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	values := make([]netValue, 0, len(raw.Data.List))
+	for _, item := range raw.Data.List {
+		date := strings.TrimSpace(item.Date)
+		nav, ok := parseNumber(item.NAV)
+		if !dateRE.MatchString(date) || !ok {
 			continue
 		}
-		text := func(i int) string {
-			if i < 0 || i >= len(cells) {
-				return ""
-			}
-			return strings.TrimSpace(html.UnescapeString(tagRe.ReplaceAllString(cells[i][1], "")))
+		value := netValue{Date: date, NAV: nav}
+		if growth, ok := parseNumber(item.Growth); ok {
+			value.Growth = growth
+			value.HasGrowth = true
 		}
-		date := text(0)
-		if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(date) {
-			continue
-		}
-		nav, ok := parseNumber(text(1))
-		if !ok {
-			continue
-		}
-		item := netValue{Date: date, NAV: nav}
-		for i := 2; i < len(cells); i++ {
-			t := strings.TrimSuffix(text(i), "%")
-			if growth, ok := parseNumber(t); ok && strings.Contains(text(i), "%") {
-				item.Growth = growth
-				item.HasGrowth = true
-				break
-			}
-		}
-		values = append(values, item)
+		values = append(values, value)
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("net values response contains no valid records")
 	}
 	sort.Slice(values, func(i, j int) bool {
 		return values[i].Date < values[j].Date
 	})
-	return values
+	return values, nil
 }
 
 func ParseFundStockHoldings(body string, now time.Time) FundStockHoldings {
