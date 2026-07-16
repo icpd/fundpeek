@@ -142,13 +142,11 @@ func (c *Client) FetchQuote(ctx context.Context, code string) (Quote, error) {
 	if gzErr != nil && navErr != nil {
 		return quote, fmt.Errorf("%v; %v", gzErr, navErr)
 	}
-	if !quote.HasGSZ && !quote.HasDWJZ {
-		if gzErr != nil {
-			return quote, gzErr
-		}
-		if navErr != nil {
-			return quote, navErr
-		}
+	if gzErr != nil {
+		return quote, gzErr
+	}
+	if navErr != nil {
+		return quote, navErr
 	}
 	return quote, nil
 }

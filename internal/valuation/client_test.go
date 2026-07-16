@@ -82,6 +82,49 @@ func TestFetchLatestNetValuesUsesCurrentJSONAPI(t *testing.T) {
 	}
 }
 
+func restyResponse(r *http.Request, status int, contentType, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{contentType}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}
+}
+
+func TestFetchQuoteReturnsEstimateWithNetValueError(t *testing.T) {
+	gz := resty.New().SetBaseURL("https://fundgz.1234567.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusOK, "application/javascript", `jsonpgz({"fundcode":"000001","name":"华夏成长混合","jzrq":"2026-07-15","dwjz":"1.4600","gsz":"1.4366","gszzl":"-1.60","gztime":"2026-07-16 11:30"});`), nil
+	}))
+	fundAPI := resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusBadGateway, "application/json", `{"message":"upstream unavailable"}`), nil
+	}))
+
+	quote, err := (&Client{fundgz: gz, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
+	if err == nil || !strings.Contains(err.Error(), "fetch net values 000001: http 502") {
+		t.Fatalf("error = %v, want net-value HTTP error", err)
+	}
+	if !quote.HasGSZ || quote.GSZ != 1.4366 || !quote.HasGSZZL || quote.GSZZL != -1.60 {
+		t.Fatalf("quote = %#v, want preserved estimate fields", quote)
+	}
+}
+
+func TestFetchQuoteReturnsNetValueWithEstimateError(t *testing.T) {
+	gz := resty.New().SetBaseURL("https://fundgz.1234567.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusBadGateway, "application/javascript", "unavailable"), nil
+	}))
+	fundAPI := resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusOK, "application/json", `{"Data":{"LSJZList":[{"FSRQ":"2026-07-15","DWJZ":"1.4600","JZZZL":"-3.31"},{"FSRQ":"2026-07-14","DWJZ":"1.5100","JZZZL":"1.27"}]},"ErrCode":0}`), nil
+	}))
+
+	quote, err := (&Client{fundgz: gz, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
+	if err == nil || !strings.Contains(err.Error(), "fetch fundgz 000001: http 502") {
+		t.Fatalf("error = %v, want estimate HTTP error", err)
+	}
+	if !quote.HasDWJZ || quote.DWJZ != 1.46 || !quote.HasZZL || quote.ZZL != -3.31 || !quote.HasLastNAV || quote.LastNAV != 1.51 {
+		t.Fatalf("quote = %#v, want preserved NAV fields", quote)
+	}
+}
+
 func TestParseFundStockHoldingsFindsReportDateAndColumns(t *testing.T) {
 	body := `var apidata={ content:"<div>报告期：2026-03-31</div><table><thead><tr><th>序号</th><th>股票代码</th><th>股票名称</th><th>持股数</th><th>持仓市值</th><th>占净值比例</th></tr></thead><tbody><tr><td>1</td><td><a>600519</a></td><td>贵州茅台</td><td>12,300</td><td>1820.50</td><td>9.87%</td></tr><tr><td>2</td><td>00700.HK</td><td>腾讯控股</td><td>45,000</td><td>1500</td><td>8.01%</td></tr></tbody></table>",records:2};`
 
