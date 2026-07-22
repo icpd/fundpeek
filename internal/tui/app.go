@@ -814,12 +814,23 @@ func RefreshFundQuotes(ctx context.Context, a *fundapp.App, positions []Position
 				return
 			}
 			q, err := client.FetchQuote(ctx, pos.Code)
+			fetchedValues := fundQuoteHasValues(q)
+			if !fetchedValues {
+				cached, ok, cacheErr := a.CachedFundQuote(pos.Code)
+				if cacheErr == nil && ok {
+					q = cached
+				} else if err == nil && cacheErr != nil {
+					err = cacheErr
+				}
+			}
 			mu.Lock()
 			if err != nil {
 				errs[pos.Code] = err
 			}
 			if q.Code != "" {
 				quotes[pos.Code] = q
+			}
+			if fetchedValues {
 				_ = a.SetFundQuote(pos.Code, q)
 			}
 			mu.Unlock()
@@ -830,6 +841,10 @@ func RefreshFundQuotes(ctx context.Context, a *fundapp.App, positions []Position
 	rows := BuildRows(positions, quotes, errs)
 	sortRows(rows)
 	return rows, errs
+}
+
+func fundQuoteHasValues(quote valuation.Quote) bool {
+	return quote.HasDWJZ || quote.HasGSZ || quote.HasGSZZL || quote.HasZZL || quote.HasLastNAV
 }
 
 func LoadDetailSnapshot(a *fundapp.App, fund Position) (DetailData, bool, error) {

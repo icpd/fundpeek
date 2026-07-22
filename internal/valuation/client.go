@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -19,10 +20,11 @@ import (
 )
 
 type Client struct {
-	fundgz  *resty.Client
-	f10     *resty.Client
-	fundAPI *resty.Client
-	minute  *resty.Client
+	estimate *resty.Client
+	sina     *resty.Client
+	f10      *resty.Client
+	fundAPI  *resty.Client
+	minute   *resty.Client
 }
 
 type Quote struct {
@@ -104,10 +106,11 @@ type netValue struct {
 
 func NewClient() *Client {
 	return &Client{
-		fundgz:  httpclient.New("https://fundgz.1234567.com.cn"),
-		f10:     httpclient.New("https://fundf10.eastmoney.com"),
-		fundAPI: httpclient.New("https://api.fund.eastmoney.com"),
-		minute:  httpclient.New("https://proxy.finance.qq.com"),
+		estimate: httpclient.New("https://fundcomapi.tiantianfunds.com"),
+		sina:     httpclient.New("https://stock.finance.sina.com.cn"),
+		f10:      httpclient.New("https://fundf10.eastmoney.com"),
+		fundAPI:  httpclient.New("https://api.fund.eastmoney.com"),
+		minute:   httpclient.New("https://proxy.finance.qq.com"),
 	}
 }
 
@@ -117,7 +120,7 @@ func (c *Client) FetchQuote(ctx context.Context, code string) (Quote, error) {
 		return Quote{}, fmt.Errorf("fund code is required")
 	}
 
-	quote, gzErr := c.fetchFundGZ(ctx, code)
+	quote, estimateErr := c.fetchRealtimeFundEstimate(ctx, code)
 	values, navErr := c.fetchLatestNetValues(ctx, code, 3)
 	if len(values) > 0 {
 		latest := values[len(values)-1]
@@ -139,11 +142,11 @@ func (c *Client) FetchQuote(ctx context.Context, code string) (Quote, error) {
 	if quote.Code == "" {
 		quote.Code = code
 	}
-	if gzErr != nil && navErr != nil {
-		return quote, fmt.Errorf("%v; %v", gzErr, navErr)
+	if estimateErr != nil && navErr != nil {
+		return quote, fmt.Errorf("%v; %v", estimateErr, navErr)
 	}
-	if gzErr != nil {
-		return quote, gzErr
+	if estimateErr != nil {
+		return quote, estimateErr
 	}
 	if navErr != nil {
 		return quote, navErr
@@ -251,18 +254,62 @@ func (c *Client) FetchStockMinute(ctx context.Context, code string) (StockMinute
 	return minute, nil
 }
 
-func (c *Client) fetchFundGZ(ctx context.Context, code string) (Quote, error) {
-	path := fmt.Sprintf("/js/%s.js?rt=%d", code, time.Now().UnixMilli())
-	resp, err := c.fundgz.R().
+func (c *Client) fetchRealtimeFundEstimate(ctx context.Context, code string) (Quote, error) {
+	quote, estimateErr := c.fetchFundEstimate(ctx, code)
+	if estimateErr == nil && quote.HasGSZ && quote.HasGSZZL {
+		return quote, nil
+	}
+
+	fallback, sinaErr := c.fetchSinaFundEstimate(ctx, code)
+	if sinaErr == nil {
+		return mergeFundEstimate(quote, fallback), nil
+	}
+	if estimateErr != nil {
+		return quote, fmt.Errorf("%v; %v", estimateErr, sinaErr)
+	}
+	return quote, sinaErr
+}
+
+func (c *Client) fetchFundEstimate(ctx context.Context, code string) (Quote, error) {
+	resp, err := c.estimate.R().
 		SetContext(ctx).
-		Get(path)
+		SetQueryParams(map[string]string{
+			"FCODES": code,
+			"FIELDS": "FCODE,SHORTNAME,GSZZL,GZTIME,GSZ,NAV,PDATE",
+		}).
+		Get("/mm/newCore/FundValuationLast")
 	if err != nil {
-		return Quote{}, fmt.Errorf("fetch fundgz %s: %w", code, err)
+		return Quote{}, fmt.Errorf("fetch fund estimate %s: %w", code, err)
 	}
 	if resp.IsError() {
-		return Quote{}, fmt.Errorf("fetch fundgz %s: http %d: %s", code, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
+		return Quote{}, fmt.Errorf("fetch fund estimate %s: http %d: %s", code, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
 	}
-	return ParseFundGZ(resp.String())
+	quote, err := ParseFundEstimate(resp.String(), code)
+	if err != nil {
+		return Quote{}, fmt.Errorf("fetch fund estimate %s: %w", code, err)
+	}
+	return quote, nil
+}
+
+func (c *Client) fetchSinaFundEstimate(ctx context.Context, code string) (Quote, error) {
+	resp, err := c.sina.R().
+		SetContext(ctx).
+		SetQueryParams(map[string]string{
+			"symbol":   code,
+			"callback": "fundpeek",
+		}).
+		Get("/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic")
+	if err != nil {
+		return Quote{}, fmt.Errorf("fetch sina fund estimate %s: %w", code, err)
+	}
+	if resp.IsError() {
+		return Quote{}, fmt.Errorf("fetch sina fund estimate %s: http %d: %s", code, resp.StatusCode(), httpclient.SafeBody(resp.Body()))
+	}
+	quote, err := ParseSinaFundEstimate(resp.String(), code)
+	if err != nil {
+		return Quote{}, fmt.Errorf("fetch sina fund estimate %s: %w", code, err)
+	}
+	return quote, nil
 }
 
 func (c *Client) fetchLatestNetValues(ctx context.Context, code string, count int) ([]netValue, error) {
@@ -291,46 +338,157 @@ func (c *Client) fetchLatestNetValues(ctx context.Context, code string, count in
 	return values, nil
 }
 
-func ParseFundGZ(body string) (Quote, error) {
-	start := strings.Index(body, "(")
-	end := strings.LastIndex(body, ")")
+func ParseFundEstimate(body string, code string) (Quote, error) {
+	var raw struct {
+		Data []struct {
+			Code   string `json:"FCODE"`
+			Name   string `json:"SHORTNAME"`
+			JZRQ   string `json:"PDATE"`
+			DWJZ   any    `json:"NAV"`
+			GSZ    any    `json:"GSZ"`
+			GSZZL  any    `json:"GSZZL"`
+			GZTime string `json:"GZTIME"`
+		} `json:"data"`
+		ErrorCode int  `json:"errorCode"`
+		Success   bool `json:"success"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		return Quote{}, fmt.Errorf("decode fund estimate: %w", err)
+	}
+	if !raw.Success {
+		return Quote{}, fmt.Errorf("fund estimate api error %d", raw.ErrorCode)
+	}
+	code = strings.TrimSpace(code)
+	for _, item := range raw.Data {
+		if strings.TrimSpace(item.Code) != code {
+			continue
+		}
+		quote := Quote{
+			Code:   code,
+			Name:   strings.TrimSpace(item.Name),
+			JZRQ:   strings.TrimSpace(item.JZRQ),
+			GZTime: strings.TrimSpace(item.GZTime),
+		}
+		quote.DWJZ, quote.HasDWJZ = parseJSONNumber(item.DWJZ)
+		quote.GSZ, quote.HasGSZ = parseJSONNumber(item.GSZ)
+		quote.GSZZL, quote.HasGSZZL = parseJSONNumber(item.GSZZL)
+		return quote, nil
+	}
+	return Quote{}, fmt.Errorf("fund estimate response missing code %s", code)
+}
+
+func ParseSinaFundEstimate(body string, code string) (Quote, error) {
+	start := strings.Index(body, "{")
+	end := strings.LastIndex(body, "}")
 	if start < 0 || end <= start {
-		return Quote{}, fmt.Errorf("invalid fundgz jsonp")
+		return Quote{}, fmt.Errorf("invalid sina fund estimate jsonp")
 	}
 	var raw struct {
-		FundCode string `json:"fundcode"`
-		Name     string `json:"name"`
-		JZRQ     string `json:"jzrq"`
-		DWJZ     string `json:"dwjz"`
-		GSZ      string `json:"gsz"`
-		GSZZL    string `json:"gszzl"`
-		GZTime   string `json:"gztime"`
+		Result struct {
+			Status struct {
+				Code int `json:"code"`
+			} `json:"status"`
+			Data *struct {
+				NetWorth []struct {
+					Code         string `json:"symbol"`
+					Minute       string `json:"min_time"`
+					Date         string `json:"pre_date"`
+					NAVFirst     any    `json:"pre_nav"`
+					GrowthFirst  any    `json:"growthrate"`
+					NAVSecond    any    `json:"pre_nav2"`
+					GrowthSecond any    `json:"growthrate2"`
+				} `json:"networth"`
+			} `json:"data"`
+		} `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(body[start+1:end]), &raw); err != nil {
-		return Quote{}, fmt.Errorf("decode fundgz json: %w", err)
+	if err := json.Unmarshal([]byte(body[start:end+1]), &raw); err != nil {
+		return Quote{}, fmt.Errorf("decode sina fund estimate: %w", err)
 	}
-	q := Quote{
-		Code:   strings.TrimSpace(raw.FundCode),
-		Name:   strings.TrimSpace(raw.Name),
-		JZRQ:   strings.TrimSpace(raw.JZRQ),
-		GZTime: strings.TrimSpace(raw.GZTime),
+	if raw.Result.Status.Code != 0 {
+		return Quote{}, fmt.Errorf("sina fund estimate api error %d", raw.Result.Status.Code)
 	}
-	if q.Code == "" {
-		return Quote{}, fmt.Errorf("fundgz response missing code")
+	if raw.Result.Data == nil || len(raw.Result.Data.NetWorth) == 0 {
+		return Quote{}, fmt.Errorf("sina fund estimate response contains no estimate")
 	}
-	if v, ok := parseNumber(raw.DWJZ); ok {
-		q.DWJZ = v
-		q.HasDWJZ = true
+	item := raw.Result.Data.NetWorth[len(raw.Result.Data.NetWorth)-1]
+	code = strings.TrimSpace(code)
+	if strings.TrimSpace(item.Code) != code {
+		return Quote{}, fmt.Errorf("sina fund estimate response missing code %s", code)
 	}
-	if v, ok := parseNumber(raw.GSZ); ok {
-		q.GSZ = v
-		q.HasGSZ = true
+
+	gsz, change, ok := parseSinaEstimatePair(item.NAVSecond, item.GrowthSecond)
+	if !ok {
+		gsz, change, ok = parseSinaEstimatePair(item.NAVFirst, item.GrowthFirst)
 	}
-	if v, ok := parseNumber(raw.GSZZL); ok {
-		q.GSZZL = v
-		q.HasGSZZL = true
+	if !ok {
+		return Quote{}, fmt.Errorf("sina fund estimate response contains no estimate")
 	}
-	return q, nil
+	return Quote{
+		Code:     code,
+		GSZ:      gsz,
+		HasGSZ:   true,
+		GSZZL:    change,
+		HasGSZZL: true,
+		GZTime:   estimateMinute(item.Date, item.Minute),
+	}, nil
+}
+
+func parseSinaEstimatePair(nav any, growth any) (float64, float64, bool) {
+	gsz, hasGSZ := parseJSONNumber(nav)
+	rate, hasRate := parseJSONNumber(growth)
+	change := rate * 100
+	if !hasGSZ || !hasRate || math.IsNaN(change) || math.IsInf(change, 0) {
+		return 0, 0, false
+	}
+	return gsz, change, true
+}
+
+func mergeFundEstimate(quote Quote, estimate Quote) Quote {
+	if quote.Code == "" {
+		quote.Code = estimate.Code
+	}
+	if quote.Name == "" {
+		quote.Name = estimate.Name
+	}
+	quote.GSZ = estimate.GSZ
+	quote.HasGSZ = estimate.HasGSZ
+	quote.GSZZL = estimate.GSZZL
+	quote.HasGSZZL = estimate.HasGSZZL
+	quote.GZTime = estimate.GZTime
+	return quote
+}
+
+func estimateMinute(date string, clock string) string {
+	date = strings.TrimSpace(date)
+	parts := strings.Split(strings.TrimSpace(clock), ":")
+	clock = ""
+	if len(parts) >= 2 {
+		clock = parts[0] + ":" + parts[1]
+	}
+	if date == "" {
+		return clock
+	}
+	if clock == "" {
+		return date
+	}
+	return date + " " + clock
+}
+
+func parseJSONNumber(value any) (float64, bool) {
+	var number float64
+	var ok bool
+	switch value := value.(type) {
+	case float64:
+		number, ok = value, true
+	case json.Number:
+		number, ok = parseNumber(value.String())
+	case string:
+		number, ok = parseNumber(value)
+	}
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, false
+	}
+	return number, true
 }
 
 func ParseNetValues(body string) ([]netValue, error) {

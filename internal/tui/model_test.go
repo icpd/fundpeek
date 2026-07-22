@@ -1168,6 +1168,52 @@ func TestRefreshFundQuotesStoresCache(t *testing.T) {
 	}
 }
 
+func TestRefreshFundQuotesKeepsCachedQuoteOnEmptyFailure(t *testing.T) {
+	dir := t.TempDir()
+	a := fundapp.New(config.Config{CacheDir: dir}, nil)
+	seed := valuation.Quote{Code: "000001", GSZ: 1.025, HasGSZ: true, GSZZL: 2.5, HasGSZZL: true, GZTime: "2026-07-22 10:12"}
+	if err := a.SetFundQuote("000001", seed); err != nil {
+		t.Fatal(err)
+	}
+	store := fundcache.NewFileCache(dir, nil)
+	var before valuation.Quote
+	beforeEntry, ok, err := store.Get("fund_quote/000001", &before)
+	if err != nil || !ok {
+		t.Fatalf("read seeded quote: ok=%v err=%v", ok, err)
+	}
+	oldFundQuoteFetcher := newFundQuoteFetcher
+	t.Cleanup(func() { newFundQuoteFetcher = oldFundQuoteFetcher })
+	newFundQuoteFetcher = func() fundQuoteFetcher {
+		return fundQuoteFetcherFunc(func(_ context.Context, code string) (valuation.Quote, error) {
+			return valuation.Quote{Code: code}, errors.New("all quote sources failed")
+		})
+	}
+
+	rows, errs := RefreshFundQuotes(context.Background(), a, []Position{{Code: "000001", Share: 100}})
+
+	if err := errs["000001"]; err == nil || !strings.Contains(err.Error(), "all quote sources failed") {
+		t.Fatalf("errs = %#v, want fetch failure", errs)
+	}
+	if len(rows) != 1 || !rows[0].Quote.HasGSZZL || rows[0].Quote.GSZZL != seed.GSZZL {
+		t.Fatalf("rows = %#v, want stale cached quote with fetch error", rows)
+	}
+	cached, ok, err := a.CachedFundQuote("000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !cached.HasGSZZL || cached.GSZZL != seed.GSZZL || cached.GZTime != seed.GZTime {
+		t.Fatalf("cached quote = %#v ok=%v, want original quote preserved", cached, ok)
+	}
+	var after valuation.Quote
+	afterEntry, ok, err := store.Get("fund_quote/000001", &after)
+	if err != nil || !ok {
+		t.Fatalf("read preserved quote: ok=%v err=%v", ok, err)
+	}
+	if !afterEntry.FetchedAt.Equal(beforeEntry.FetchedAt) {
+		t.Fatalf("cache fetched_at changed from %s to %s on failed refresh", beforeEntry.FetchedAt, afterEntry.FetchedAt)
+	}
+}
+
 func TestLoadDetailSnapshotUsesStaleHoldingsAndStockQuoteCache(t *testing.T) {
 	dir := t.TempDir()
 	store := fundcache.NewFileCache(dir, func() time.Time { return time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC) })

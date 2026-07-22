@@ -13,19 +13,83 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func TestParseFundGZ(t *testing.T) {
-	got, err := ParseFundGZ(`jsonpgz({"fundcode":"000001","name":"华夏成长混合","jzrq":"2026-05-08","dwjz":"1.1960","gsz":"1.2343","gszzl":"3.20","gztime":"2026-05-11 14:12"});`)
+func TestFetchFundEstimateUsesCurrentJSONAPI(t *testing.T) {
+	var gotURL *url.URL
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotURL = r.URL
+		body := `{"data":[{"NAV":0.55,"GZTIME":"2026-07-22 10:09","SHORTNAME":"招商中证白酒指数(LOF)A","FCODE":"161725","PDATE":"2026-07-21","GSZZL":-0.36,"GSZ":0.548}],"errorCode":0,"success":true}`
+		return restyResponse(r, http.StatusOK, "application/json", body), nil
+	})
+	client := &Client{estimate: resty.New().SetBaseURL("https://fundcomapi.tiantianfunds.com").SetTransport(transport)}
+
+	got, err := client.fetchFundEstimate(context.Background(), "161725")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Code != "000001" || got.Name != "华夏成长混合" {
+	if got.Code != "161725" || got.Name != "招商中证白酒指数(LOF)A" || got.JZRQ != "2026-07-21" {
 		t.Fatalf("unexpected identity: %#v", got)
 	}
-	if !got.HasGSZZL || got.GSZZL != 3.20 {
-		t.Fatalf("GSZZL = %v/%f, want true/3.20", got.HasGSZZL, got.GSZZL)
+	if !got.HasGSZZL || got.GSZZL != -0.36 {
+		t.Fatalf("GSZZL = %v/%f, want true/-0.36", got.HasGSZZL, got.GSZZL)
 	}
-	if !got.HasGSZ || got.GSZ != 1.2343 {
-		t.Fatalf("GSZ = %v/%f, want true/1.2343", got.HasGSZ, got.GSZ)
+	if !got.HasGSZ || got.GSZ != 0.548 || !got.HasDWJZ || got.DWJZ != 0.55 {
+		t.Fatalf("estimate/NAV = %#v, want 0.548/0.55", got)
+	}
+	if gotURL.Scheme != "https" || gotURL.Host != "fundcomapi.tiantianfunds.com" || gotURL.Path != "/mm/newCore/FundValuationLast" {
+		t.Fatalf("request URL = %s, want current fund valuation API", gotURL)
+	}
+	query := gotURL.Query()
+	if query.Get("FCODES") != "161725" || query.Get("FIELDS") != "FCODE,SHORTNAME,GSZZL,GZTIME,GSZ,NAV,PDATE" {
+		t.Fatalf("request query = %v, want fund code and estimate fields", query)
+	}
+}
+
+func TestParseSinaFundEstimatePrefersSecondMethod(t *testing.T) {
+	body := `/*<script>location.href='//sina.com';</script>*/
+fundpeek({"result":{"status":{"code":0},"data":{"networth":[{"symbol":"000001","min_time":"10:12:00","pre_date":"2026-07-22","pre_nav":"1.4460","growthrate":0.00069204152249127,"pre_nav2":"1.4411","growthrate2":"-0.002699"}]}}})`
+
+	got, err := ParseSinaFundEstimate(body, "000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != "000001" || !got.HasGSZ || got.GSZ != 1.4411 {
+		t.Fatalf("quote = %#v, want Sina method 2 NAV", got)
+	}
+	if !got.HasGSZZL || math.Abs(got.GSZZL-(-0.2699)) > 0.0000001 {
+		t.Fatalf("GSZZL = %v/%f, want true/-0.2699", got.HasGSZZL, got.GSZZL)
+	}
+	if got.GZTime != "2026-07-22 10:12" {
+		t.Fatalf("GZTime = %q, want minute precision", got.GZTime)
+	}
+}
+
+func TestParseSinaFundEstimateFallsBackToFirstMethod(t *testing.T) {
+	body := `fundpeek({"result":{"status":{"code":0},"data":{"networth":[{"symbol":"000001","min_time":"10:12:00","pre_date":"2026-07-22","pre_nav":"1.4460","growthrate":0.00069204152249127,"pre_nav2":null,"growthrate2":null}]}}})`
+
+	got, err := ParseSinaFundEstimate(body, "000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasGSZ || got.GSZ != 1.446 || !got.HasGSZZL || math.Abs(got.GSZZL-0.069204152249127) > 0.0000001 {
+		t.Fatalf("quote = %#v, want Sina method 1 fallback", got)
+	}
+}
+
+func TestParseSinaFundEstimateRejectsEmptyCurve(t *testing.T) {
+	body := `fundpeek({"result":{"status":{"code":0},"data":{"networth":null}}})`
+
+	_, err := ParseSinaFundEstimate(body, "999999")
+	if err == nil || !strings.Contains(err.Error(), "contains no estimate") {
+		t.Fatalf("error = %v, want empty-estimate error", err)
+	}
+}
+
+func TestParseSinaFundEstimateRejectsScaledOverflow(t *testing.T) {
+	body := `fundpeek({"result":{"status":{"code":0},"data":{"networth":[{"symbol":"000001","min_time":"10:12:00","pre_date":"2026-07-22","pre_nav":null,"growthrate":null,"pre_nav2":"1.4411","growthrate2":"1e308"}]}}})`
+
+	_, err := ParseSinaFundEstimate(body, "000001")
+	if err == nil || !strings.Contains(err.Error(), "contains no estimate") {
+		t.Fatalf("error = %v, want overflow rejected", err)
 	}
 }
 
@@ -92,14 +156,14 @@ func restyResponse(r *http.Request, status int, contentType, body string) *http.
 }
 
 func TestFetchQuoteReturnsEstimateWithNetValueError(t *testing.T) {
-	gz := resty.New().SetBaseURL("https://fundgz.1234567.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return restyResponse(r, http.StatusOK, "application/javascript", `jsonpgz({"fundcode":"000001","name":"华夏成长混合","jzrq":"2026-07-15","dwjz":"1.4600","gsz":"1.4366","gszzl":"-1.60","gztime":"2026-07-16 11:30"});`), nil
+	estimate := resty.New().SetBaseURL("https://fundcomapi.tiantianfunds.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusOK, "application/json", `{"data":[{"FCODE":"000001","SHORTNAME":"华夏成长混合","PDATE":"2026-07-15","NAV":1.46,"GSZ":1.4366,"GSZZL":-1.60,"GZTIME":"2026-07-16 11:30"}],"errorCode":0,"success":true}`), nil
 	}))
 	fundAPI := resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return restyResponse(r, http.StatusBadGateway, "application/json", `{"message":"upstream unavailable"}`), nil
 	}))
 
-	quote, err := (&Client{fundgz: gz, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
+	quote, err := (&Client{estimate: estimate, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
 	if err == nil || !strings.Contains(err.Error(), "fetch net values 000001: http 502") {
 		t.Fatalf("error = %v, want net-value HTTP error", err)
 	}
@@ -109,19 +173,53 @@ func TestFetchQuoteReturnsEstimateWithNetValueError(t *testing.T) {
 }
 
 func TestFetchQuoteReturnsNetValueWithEstimateError(t *testing.T) {
-	gz := resty.New().SetBaseURL("https://fundgz.1234567.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	estimate := resty.New().SetBaseURL("https://fundcomapi.tiantianfunds.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restyResponse(r, http.StatusBadGateway, "application/json", "unavailable"), nil
+	}))
+	sina := resty.New().SetBaseURL("https://stock.finance.sina.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return restyResponse(r, http.StatusBadGateway, "application/javascript", "unavailable"), nil
 	}))
 	fundAPI := resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return restyResponse(r, http.StatusOK, "application/json", `{"Data":{"LSJZList":[{"FSRQ":"2026-07-15","DWJZ":"1.4600","JZZZL":"-3.31"},{"FSRQ":"2026-07-14","DWJZ":"1.5100","JZZZL":"1.27"}]},"ErrCode":0}`), nil
 	}))
 
-	quote, err := (&Client{fundgz: gz, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
-	if err == nil || !strings.Contains(err.Error(), "fetch fundgz 000001: http 502") {
+	quote, err := (&Client{estimate: estimate, sina: sina, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
+	if err == nil || !strings.Contains(err.Error(), "fetch fund estimate 000001: http 502") || !strings.Contains(err.Error(), "fetch sina fund estimate 000001: http 502") {
 		t.Fatalf("error = %v, want estimate HTTP error", err)
 	}
 	if !quote.HasDWJZ || quote.DWJZ != 1.46 || !quote.HasZZL || quote.ZZL != -3.31 || !quote.HasLastNAV || quote.LastNAV != 1.51 {
 		t.Fatalf("quote = %#v, want preserved NAV fields", quote)
+	}
+}
+
+func TestFetchQuoteFallsBackToSinaWhenCurrentEstimateMissing(t *testing.T) {
+	estimate := resty.New().SetBaseURL("https://fundcomapi.tiantianfunds.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"data":[{"FCODE":"000001","SHORTNAME":"华夏成长混合","PDATE":"2026-07-21","NAV":1.445,"GSZ":null,"GSZZL":null,"GZTIME":null}],"errorCode":0,"success":true}`
+		return restyResponse(r, http.StatusOK, "application/json", body), nil
+	}))
+	var gotSinaURL *url.URL
+	sina := resty.New().SetBaseURL("https://stock.finance.sina.com.cn").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotSinaURL = r.URL
+		body := `/*<script>location.href='//sina.com';</script>*/fundpeek({"result":{"status":{"code":0},"data":{"networth":[{"symbol":"000001","min_time":"10:12:00","pre_date":"2026-07-22","pre_nav":"1.4460","growthrate":0.00069204152249127,"pre_nav2":"1.4411","growthrate2":"-0.002699"}]}}})`
+		return restyResponse(r, http.StatusOK, "application/javascript", body), nil
+	}))
+	fundAPI := resty.New().SetBaseURL("https://api.fund.eastmoney.com").SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"Data":{"LSJZList":[{"FSRQ":"2026-07-21","DWJZ":"1.4450","JZZZL":"10.64"},{"FSRQ":"2026-07-20","DWJZ":"1.3060","JZZZL":"-0.99"}]},"ErrCode":0}`
+		return restyResponse(r, http.StatusOK, "application/json", body), nil
+	}))
+
+	quote, err := (&Client{estimate: estimate, sina: sina, fundAPI: fundAPI}).FetchQuote(context.Background(), "000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.Name != "华夏成长混合" || !quote.HasGSZ || quote.GSZ != 1.4411 || !quote.HasGSZZL || math.Abs(quote.GSZZL-(-0.2699)) > 0.0000001 {
+		t.Fatalf("quote = %#v, want identity plus Sina estimate", quote)
+	}
+	if !quote.HasDWJZ || quote.DWJZ != 1.445 || !quote.HasLastNAV || quote.LastNAV != 1.306 || quote.GZTime != "2026-07-22 10:12" {
+		t.Fatalf("quote = %#v, want current NAV plus minute estimate time", quote)
+	}
+	if gotSinaURL.Path != "/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic" || gotSinaURL.Query().Get("symbol") != "000001" || gotSinaURL.Query().Get("callback") != "fundpeek" {
+		t.Fatalf("Sina request URL = %s, want symbol and callback", gotSinaURL)
 	}
 }
 
