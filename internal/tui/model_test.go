@@ -491,6 +491,101 @@ func TestTabSwitchesBetweenFundAndWatchLists(t *testing.T) {
 	}
 }
 
+func TestRefreshIntervals(t *testing.T) {
+	if refreshEvery != 30*time.Second {
+		t.Fatalf("refreshEvery = %s, want 30s", refreshEvery)
+	}
+	if watchRefreshEvery != 10*time.Second {
+		t.Fatalf("watchRefreshEvery = %s, want 10s", watchRefreshEvery)
+	}
+}
+
+func TestInitSchedulesBothRefreshTimers(t *testing.T) {
+	cmd := (model{watch: newWatchState()}).Init()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init command message = %T, want tea.BatchMsg", cmd())
+	}
+	if len(batch) != 5 {
+		t.Fatalf("Init batch length = %d, want 5 commands", len(batch))
+	}
+}
+
+func TestWatchTickRefreshesOnlyVisibleWatchList(t *testing.T) {
+	tests := []struct {
+		name          string
+		start         model
+		wantLoading   bool
+		wantErrText   string
+		wantLoadBatch bool
+	}{
+		{
+			name:          "visible watch list",
+			start:         model{page: pageList, listMode: listWatch, watch: watchState{ErrText: "stale"}},
+			wantLoading:   true,
+			wantLoadBatch: true,
+		},
+		{
+			name:        "refresh already running",
+			start:       model{page: pageList, listMode: listWatch, watch: watchState{Loading: true, ErrText: "keep"}},
+			wantLoading: true,
+			wantErrText: "keep",
+		},
+		{
+			name:        "fund list",
+			start:       model{page: pageList, listMode: listFunds, watch: watchState{ErrText: "keep"}},
+			wantErrText: "keep",
+		},
+		{
+			name:        "watch detail",
+			start:       model{page: pageWatchDetail, listMode: listWatch, watch: watchState{ErrText: "keep"}},
+			wantErrText: "keep",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updated, cmd := tt.start.Update(watchTickMsg(time.Now()))
+			got := updated.(model)
+			if got.watch.Loading != tt.wantLoading {
+				t.Fatalf("watch.Loading = %v, want %v", got.watch.Loading, tt.wantLoading)
+			}
+			if got.watch.ErrText != tt.wantErrText {
+				t.Fatalf("watch.ErrText = %q, want %q", got.watch.ErrText, tt.wantErrText)
+			}
+			if cmd == nil {
+				t.Fatal("watch tick must schedule its next command")
+			}
+			if tt.wantLoadBatch {
+				batch, ok := cmd().(tea.BatchMsg)
+				if !ok || len(batch) != 3 {
+					t.Fatalf("visible watch tick command = %T len=%d, want three-command batch", batch, len(batch))
+				}
+			}
+		})
+	}
+}
+
+func TestFundTickDoesNotRefreshWatchList(t *testing.T) {
+	start := model{
+		page:     pageList,
+		listMode: listWatch,
+		watch:    watchState{ErrText: "keep"},
+	}
+
+	updated, cmd := start.Update(tickMsg(time.Now()))
+	got := updated.(model)
+	if got.watch.Loading {
+		t.Fatal("30-second fund tick should not refresh the watch list")
+	}
+	if got.watch.ErrText != "keep" {
+		t.Fatalf("watch.ErrText = %q, want existing text preserved", got.watch.ErrText)
+	}
+	if cmd == nil {
+		t.Fatal("fund tick must schedule its next command")
+	}
+}
+
 func TestRenderTableTruncatesLongFundNameButKeepsCode(t *testing.T) {
 	longName := "中欧时代先锋股票型发起式证券投资基金超长名称测试"
 	out := renderTable([]Row{

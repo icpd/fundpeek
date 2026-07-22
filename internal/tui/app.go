@@ -17,7 +17,10 @@ import (
 	"github.com/icpd/fundpeek/internal/watchlist"
 )
 
-const refreshEvery = 30 * time.Second
+const (
+	refreshEvery      = 30 * time.Second
+	watchRefreshEvery = 10 * time.Second
+)
 
 type model struct {
 	ctx context.Context
@@ -84,6 +87,7 @@ type watchRemovedMsg struct {
 }
 
 type tickMsg time.Time
+type watchTickMsg time.Time
 
 type page int
 
@@ -164,7 +168,7 @@ func (m model) Init() tea.Cmd {
 	if m.watch.Input.Prompt == "" {
 		m.watch = newWatchState()
 	}
-	return tea.Batch(m.load(), m.loadWatch(), tick(), m.spinnerTickCmd())
+	return tea.Batch(m.load(), m.loadWatch(), tick(), watchTick(), m.spinnerTickCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -305,15 +309,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tick()
 		}
-		if m.page == pageWatchDetail {
-			return m, tick()
-		}
-		if m.listMode == listWatch {
-			if !m.watch.Loading {
-				m.watch.Loading = true
-				m.watch.ErrText = ""
-				return m, tea.Batch(tick(), m.loadWatch(), m.spinnerTickCmd())
-			}
+		if m.page == pageWatchDetail || m.listMode == listWatch {
 			return m, tick()
 		}
 		if !m.loading {
@@ -322,6 +318,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(tick(), m.load(), m.spinnerTickCmd())
 		}
 		return m, tick()
+	case watchTickMsg:
+		if m.page == pageList && m.listMode == listWatch && !m.watch.Loading {
+			m.watch.Loading = true
+			m.watch.ErrText = ""
+			return m, tea.Batch(watchTick(), m.loadWatch(), m.spinnerTickCmd())
+		}
+		return m, watchTick()
 	case loadedMsg:
 		if msg.err != nil {
 			m.loading = false
@@ -725,6 +728,12 @@ func (m *model) spinnerTickCmd() tea.Cmd {
 func tick() tea.Cmd {
 	return tea.Tick(refreshEvery, func(t time.Time) tea.Msg {
 		return tickMsg(t)
+	})
+}
+
+func watchTick() tea.Cmd {
+	return tea.Tick(watchRefreshEvery, func(t time.Time) tea.Msg {
+		return watchTickMsg(t)
 	})
 }
 
