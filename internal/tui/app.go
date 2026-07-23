@@ -19,7 +19,7 @@ import (
 
 const (
 	refreshEvery      = 30 * time.Second
-	watchRefreshEvery = 10 * time.Second
+	watchRefreshEvery = 3 * time.Second
 )
 
 type model struct {

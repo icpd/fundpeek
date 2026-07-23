@@ -495,8 +495,8 @@ func TestRefreshIntervals(t *testing.T) {
 	if refreshEvery != 30*time.Second {
 		t.Fatalf("refreshEvery = %s, want 30s", refreshEvery)
 	}
-	if watchRefreshEvery != 10*time.Second {
-		t.Fatalf("watchRefreshEvery = %s, want 10s", watchRefreshEvery)
+	if watchRefreshEvery != 3*time.Second {
+		t.Fatalf("watchRefreshEvery = %s, want 3s", watchRefreshEvery)
 	}
 }
 
