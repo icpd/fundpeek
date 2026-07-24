@@ -511,7 +511,7 @@ func TestInitSchedulesBothRefreshTimers(t *testing.T) {
 	}
 }
 
-func TestWatchTickRefreshesOnlyVisibleWatchList(t *testing.T) {
+func TestWatchTickRefreshesVisibleWatchPages(t *testing.T) {
 	tests := []struct {
 		name          string
 		start         model
@@ -537,8 +537,15 @@ func TestWatchTickRefreshesOnlyVisibleWatchList(t *testing.T) {
 			wantErrText: "keep",
 		},
 		{
-			name:        "watch detail",
-			start:       model{page: pageWatchDetail, listMode: listWatch, watch: watchState{ErrText: "keep"}},
+			name:          "watch detail",
+			start:         model{page: pageWatchDetail, listMode: listWatch, watch: watchState{ErrText: "stale", Detail: &WatchRow{}}},
+			wantLoading:   true,
+			wantLoadBatch: true,
+		},
+		{
+			name:        "watch detail refresh already running",
+			start:       model{page: pageWatchDetail, listMode: listWatch, watch: watchState{Loading: true, ErrText: "keep", Detail: &WatchRow{}}},
+			wantLoading: true,
 			wantErrText: "keep",
 		},
 	}
@@ -563,6 +570,42 @@ func TestWatchTickRefreshesOnlyVisibleWatchList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWatchLoadedRefreshesOpenDetail(t *testing.T) {
+	item := watchlist.Item{Code: "600519", Market: "sh", Name: "贵州茅台"}
+	before := WatchRow{
+		Item:   item,
+		Minute: valuation.StockMinute{Points: []valuation.StockMinutePoint{{Time: "0930", Price: 1400}}},
+	}
+	after := WatchRow{
+		Item:   item,
+		Minute: valuation.StockMinute{Points: []valuation.StockMinutePoint{{Time: "0931", Price: 1401}}},
+	}
+	start := model{
+		page:     pageWatchDetail,
+		listMode: listWatch,
+		watch: watchState{
+			Rows:    []WatchRow{before},
+			Loading: true,
+			Detail:  &before,
+		},
+	}
+
+	updated, _ := start.Update(watchLoadedMsg{rows: []WatchRow{after}})
+	got := updated.(model)
+	if got.watch.Loading {
+		t.Fatal("watch detail should finish loading after refresh")
+	}
+	if got.watch.Detail == nil || len(got.watch.Detail.Minute.Points) != 1 {
+		t.Fatalf("watch detail after refresh = %#v, want refreshed minute point", got.watch.Detail)
+	}
+	if price := got.watch.Detail.Minute.Points[0].Price; price != 1401 {
+		t.Fatalf("watch detail price after refresh = %v, want 1401", price)
+	}
+	if got.watch.LastRefresh.IsZero() {
+		t.Fatal("watch detail refresh should update LastRefresh")
 	}
 }
 

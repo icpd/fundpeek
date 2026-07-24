@@ -319,7 +319,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 	case watchTickMsg:
-		if m.page == pageList && m.listMode == listWatch && !m.watch.Loading {
+		watchVisible := m.page == pageWatchDetail || (m.page == pageList && m.listMode == listWatch)
+		if watchVisible && !m.watch.Loading {
 			m.watch.Loading = true
 			m.watch.ErrText = ""
 			return m, tea.Batch(watchTick(), m.loadWatch(), m.spinnerTickCmd())
